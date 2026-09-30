@@ -18,6 +18,8 @@ from streaming_writer import StreamingWriter
 
 time.sleep = lambda s: None  # 冒烟测试关闭动画延迟
 
+WD_BORDER_BOTTOM = -3  # 段落底边框（与 streaming_writer 一致）
+
 
 def feed_in_pieces(writer, text, size=3):
     for i in range(0, len(text), size):
@@ -27,6 +29,12 @@ def feed_in_pieces(writer, text, size=3):
 def main():
     app = win32com.client.Dispatch("Word.Application")
     app.Visible = True
+    # 清理上次失败遗留的临时文档，避免新文档与旧选区串台
+    try:
+        while app.Documents.Count > 0:
+            app.Documents(1).Close(SaveChanges=0)
+    except Exception:
+        pass
     doc = app.Documents.Add()
     sel = app.Selection
 
@@ -169,6 +177,89 @@ def main():
     aligned()
     print("ok: 表格块后插入（容器段落之后定位）")
 
+    # ---- V7.2：嵌套列表 / 引用块 / hr / 超链接 / 声明式编辑 / undo ----
+
+    # 嵌套列表：按层级 LeftIndent（0 / 21 / 42 / 21）
+    model.insert_at_end("- 一级项\n  - 二级项\n    - 三级项\n  - 回二级")
+    nlb = model.blocks[-1]
+    assert nlb.kind == "list" and nlb.n_paras == 4, (nlb.kind, nlb.n_paras)
+    total = doc.Paragraphs.Count
+    indents = [doc.Paragraphs(total - 3 + i).Format.LeftIndent for i in range(4)]
+    assert indents == [0, 21, 42, 21], f"嵌套列表缩进错: {indents}"
+    assert "三级项" in doc.Content.Text
+    aligned()
+    print("ok: 嵌套列表（按层级缩进）")
+
+    # 引用块：两段、缩进、斜体
+    model.insert_at_end("> 引用甲\n>\n> 引用乙")
+    qb = model.blocks[-1]
+    assert qb.kind == "quote" and qb.n_paras == 2, (qb.kind, qb.n_paras)
+    total = doc.Paragraphs.Count
+    qp = doc.Paragraphs(total - 1)
+    assert qp.Format.LeftIndent == 21, f"引用缩进错: {qp.Format.LeftIndent}"
+    assert qp.Range.Font.Italic, "引用块未斜体"
+    assert "引用乙" in doc.Content.Text
+    aligned()
+    print("ok: 引用块（缩进、斜体、多段）")
+
+    # 水平线：段落底边框（或字符降级）
+    model.insert_at_end("---")
+    hb = model.blocks[-1]
+    assert hb.kind == "hr" and hb.n_paras == 1, (hb.kind, hb.n_paras)
+    total = doc.Paragraphs.Count
+    hp = doc.Paragraphs(total)
+    try:
+        line_style = hp.Range.ParagraphFormat.Borders(WD_BORDER_BOTTOM).LineStyle
+    except Exception:
+        line_style = None
+    hr_ok = (line_style not in (None, 0)) or ("――" in hp.Range.Text)
+    assert hr_ok, f"水平线既无边框也无降级字符: {hp.Range.Text!r}"
+    aligned()
+    print("ok: 水平线（段落边框优先）")
+
+    # 超链接：真实 Hyperlinks.Add；链接文字不丢
+    links_before = doc.Hyperlinks.Count
+    model.insert_at_end("看[链接文字](https://example.com)与`code`结尾")
+    lb = model.blocks[-1]
+    assert lb.kind == "paragraph", lb.kind
+    assert doc.Hyperlinks.Count == links_before + 1, \
+        f"超链接数: {doc.Hyperlinks.Count}"
+    addr = None
+    for hl in doc.Hyperlinks:
+        if hl.Range.Text == "链接文字":
+            addr = hl.Address
+    # Word 会把无路径 URL 规范化成带结尾斜杠
+    assert addr in ("https://example.com", "https://example.com/"), f"链接地址错: {addr}"
+    assert "code" in doc.Content.Text, "行内代码内容丢失"
+    aligned()
+    print("ok: 超链接（真实 Hyperlinks.Add + 行内代码字体）")
+
+    # 声明式编辑：先 preview 后 apply
+    tail = len(model.blocks) - 1
+    spec = {"op": "replace", "index": tail, "md": "声明式替换的段落"}
+    pv = model.preview_edit(spec)
+    assert pv["op"] == "replace" and pv["after"] == "声明式替换的段落", pv
+    r = model.apply_edit(spec)
+    assert r["created"] == 1 and model.blocks[tail].text == "声明式替换的段落", r
+    assert "声明式替换的段落" in doc.Content.Text
+    aligned()
+    print("ok: apply_edit / preview_edit（预览不落盘、执行后对齐）")
+
+    model.apply_edit({"op": "insert_at_end", "md": "声明式追加"})
+    assert model.blocks[-1].text == "声明式追加"
+    aligned()
+    print("ok: apply_edit insert_at_end")
+
+    # undo：单次 COM 操作（replace_text）对应一条撤销记录
+    model.replace_text("声明式替换的段落", "撤销前文本")
+    assert "撤销前文本" in doc.Content.Text
+    ok_undo = model.undo(1)
+    assert ok_undo, "undo 失败"
+    assert "撤销前文本" not in doc.Content.Text, "undo 未回退替换"
+    assert "声明式替换的段落" in doc.Content.Text, "undo 回退过度"
+    aligned()
+    print("ok: undo（单条编辑记录精确回退、块模型重建对齐）")
+
     print("\n真实 Word 冒烟测试全部通过。")
     doc.Close(SaveChanges=0)
 
@@ -177,4 +268,10 @@ if __name__ == "__main__":
     try:
         main()
     finally:
-        pass
+        # 无论成败都关闭临时文档，避免遗留文档影响下一次运行
+        try:
+            import win32com.client as _wc
+            for _ in range(3):
+                _wc.GetObject(None, "Word.Application").Documents(1).Close(SaveChanges=0)
+        except Exception:
+            pass

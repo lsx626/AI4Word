@@ -63,15 +63,23 @@ CODEGEN_SYSTEM = """
   - `delete_block(i)`: 删除第 i 块。
   - `replace_text(old, new)`: 全文查找替换。
   - `select_block(i)`: 滚动到第 i 块并高亮（演示用）。
-- 块函数的 md 参数支持 Markdown：段落、1-3 级标题、有序/无序列表、围栏代码块、表格。
+  - `preview_edit(spec)`: 只预览不执行，返回受影响块的文本级前后对比。
+  - `apply_edit(spec)`: 执行声明式编辑 spec = {"op": ..., "index": i, "md": ...}，
+    op 支持 "replace" / "insert_after" / "insert_at_end" / "delete"。
+  - `undo(times=1)`: 撤销最近 times 次编辑（Word 编辑栈）。
+  - `drain_events()`: 取出流式停顿期间检测到的用户手动改动事件。
+- 块函数的 md 参数支持 Markdown：段落、1-6 级标题、有序/无序列表（支持嵌套层级）、
+  引用块、围栏代码块、行内代码、超链接、水平线、表格。
 - 常量: `WD_STYLE_NORMAL`(-1), `WD_STYLE_HEADING_1`(-2), `WD_STYLE_HEADING_2`(-3),
   `WD_STYLE_HEADING_3`(-4), `WD_STYLE_LIST_BULLET`(-49), `WD_STYLE_LIST_NUMBER`(-50),
   `WD_ALIGN_PARAGRAPH_LEFT`(0), `WD_ALIGN_PARAGRAPH_CENTER`(1), `WD_ALIGN_PARAGRAPH_RIGHT`(2),
   `WD_PRINT_VIEW`(3), `WD_ORIENT_LANDSCAPE`(1), `WD_LINE_SPACING_1_5`(1)
 
-**两大黄金法则**:
+**三大黄金法则**:
 1. **内容编辑必须用块原语**: 涉及增、删、改文字时，**必须**使用上面的块函数（通过 block_map() 的索引定位），
    而不是自己拼接 Range 或用 Find 去猜位置。块函数会精确定位到目标段落，并保留文档其余部分。
+   多步内容编辑推荐声明式写法：先用 `preview_edit(spec)` 确认前后对比，再 `apply_edit(spec)` 执行；
+   每条 apply_edit 只做一处修改，多条修改分多条语句写。
 2. **格式修改直接改样式 (Style)**: 对字体、段落格式（对齐、缩进、行距）的修改，**必须**通过修改文档的样式定义完成。
    - 示例: `doc.Styles(WD_STYLE_NORMAL).Font.Name = "宋体"`
    - 反例（不要这样做）: 不要用 Find 或遍历所有段落的方式改格式。
@@ -201,6 +209,10 @@ def main():
         "delete_block": model.delete_block,
         "replace_text": model.replace_text,
         "select_block": model.select_block,
+        "preview_edit": model.preview_edit,
+        "apply_edit": model.apply_edit,
+        "undo": model.undo,
+        "drain_events": model.drain_events,
         "WD_STYLE_NORMAL": WD_STYLE_NORMAL,
         "WD_STYLE_HEADING_1": WD_STYLE_HEADING_1,
         "WD_STYLE_HEADING_2": WD_STYLE_HEADING_2,
@@ -217,6 +229,10 @@ def main():
     }
 
     while True:
+        model.watch.poll()  # 空闲点：检测用户在停顿期间的手动改动
+        notices = model.drain_events()
+        for ev in notices:
+            print(f"  [注意] {ev}")
         fmt = input("\n您想如何调整？> ").strip()
         if not fmt:
             continue
@@ -224,7 +240,12 @@ def main():
             print("程序已结束。")
             break
 
-        code = gen_code(fmt, api_key)
+        prompt = fmt
+        if notices:
+            # 用户在生成期间动过文档：把漂移警告带给代码生成模型，避免按旧结构猜索引
+            prompt += "\n\n注意：用户在我生成期间手动编辑了文档，块索引可能已偏移，"
+            prompt += "请先重新调用 block_map() 确认当前结构。"
+        code = gen_code(prompt, api_key)
         if not code:
             print("无法理解您的指令或 AI 未返回有效代码。")
             continue
