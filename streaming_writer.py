@@ -158,6 +158,42 @@ class StreamingWriter:
         self._think = 0.0
         self._last_feed = None
         self._md = MarkdownIt().enable("table")  # 启用 GFM 表格规则
+        # 写入锚点：一个折叠的动态 Range，记录「上一次写入的末尾」。
+        # 用户在生成期间点别处移动光标时，每次写操作前把选区拉回锚点，
+        # 保证内容始终接着已写文字往后写，而不是跳到用户的光标位置。
+        self._anchor = None
+
+    # ---------- 写入锚点（光标漂移防护） ----------
+
+    def reset_anchor(self):
+        """新一波写入开始前调用：丢弃旧锚点，第一次写入时从当前选区捕获。
+
+        调用方（GUI 引擎的一波 write / 追加补充）控制会话边界；
+        write_block 作为外部入口（文档编辑原语）也会先重置——原语的
+        调用方负责把选区定位到目标位置。
+        """
+        self._anchor = None
+
+    def _reselect_anchor(self):
+        """写操作前：选区若已漂移（用户点了别处），拉回锚点。"""
+        if self._anchor is None:
+            return
+        try:
+            self._anchor.Select()
+        except Exception:
+            self._anchor = None
+
+    def _capture_anchor(self):
+        """写操作后：以选区当前位置（本次写入的末尾）更新锚点。
+
+        锚点本身是动态 Range，文档别处的插入/删除会自动平移；每次写入
+        后再捕获一次，保证锚点精确定位在已生成内容的尾部。
+        """
+        try:
+            p = self.sel.Range.Start
+            self._anchor = self.doc.Range(p, p)
+        except Exception:
+            self._anchor = None
 
     def set_speed(self, mode):
         """设置打字档位：auto（先慢后快）/ slow / fast。"""
@@ -369,7 +405,8 @@ class StreamingWriter:
     def _draft_type(self, ch):
         d = self._draft
         if not d.buf:
-            # 批次起点：先把当前字体状态应用到选区
+            # 批次起点：先把当前字体状态应用到选区（锚点防护光标漂移）
+            self._reselect_anchor()
             self.sel.Font.Bold = d.bold
             self.sel.Font.Italic = d.italic
             # 出代码段后恢复基础字体（草稿起点捕获的字体名，真实 Word 中必为字体名）
@@ -448,6 +485,7 @@ class StreamingWriter:
                                 delta += 1 - len(content)
                             else:
                                 self.doc.Range(pos, pos).Select()
+                                self._capture_anchor()  # 退回 alt 文本的新写入点
                                 self._type_text(content, animate=False)
                     except Exception:
                         pass
@@ -539,29 +577,34 @@ class StreamingWriter:
         return None, None
 
     def _set_style(self, style):
-        """设置当前段落样式；Word 忙（重分页/刷新）被拒绝时退避重试。"""
+        """设置当前段落样式；Word 忙（重分页/刷新）被拒绝时退避重试；锚点防漂移。"""
+        self._reselect_anchor()
+
         def apply():
             self.sel.Range.Style = self.sel.Document.Styles(style)
         _com_retry(apply)
 
     def _type_paragraph(self):
-        """插入段落分隔；Word 忙时退避重试。"""
+        """插入段落分隔；Word 忙时退避重试；锚点防护光标漂移。"""
+        self._reselect_anchor()
         _com_retry(lambda: self.sel.TypeParagraph())
+        self._capture_anchor()
 
     def _write_top_level(self, md_text):
         md_text = (md_text or "").strip()
         if not md_text:
             return
         self._ensure_new_paragraph()
-        self.write_block(md_text, animate=True)
+        self._write_md(md_text, animate=True, keep_anchor=True)
 
     def _collapse_selection(self):
         """流式写入前把非折叠选区折叠到末尾。
 
         _flash 等操作会把选区覆盖在整个块上；此时 TypeText / TypeParagraph
         会"替换"选区内容（连带删除其中的内联图片）。折叠到选区末尾可保留
-        原有内容，让新内容接在后面。
+        原有内容，让新内容接在后面。先按锚点拉回选区，防止漂移。
         """
+        self._reselect_anchor()
         try:
             sel = self.sel
             if sel.Start != sel.End:
@@ -584,10 +627,18 @@ class StreamingWriter:
     def write_block(self, md_text, animate=True):
         """在当前光标位置写入任意 Markdown（可含多个块），返回登记的块列表。
 
-        调用方负责保证光标已经位于一个可用（通常是空）的段落起点；
-        本方法只管解析、应用格式、逐字写入并登记。
+        外部入口（文档编辑原语等）：调用方负责保证光标已经位于一个可用
+        （通常是空）的段落起点；本方法只管解析、应用格式、逐字写入并登记。
+        流式写入内部走 _write_top_level → _write_md(keep_anchor=True)，
+        锚点跨块延续（用户点别处时接着已写内容继续写）。
         """
+        return self._write_md(md_text, animate, keep_anchor=False)
+
+    def _write_md(self, md_text, animate=True, keep_anchor=False):
+        """write_block 的实现；keep_anchor=False 时重置锚点。"""
         md_text = (md_text or "").strip()
+        if not keep_anchor:
+            self._anchor = None
         if not md_text:
             return []
         self._emitted = 0
@@ -759,6 +810,7 @@ class StreamingWriter:
     def _quote_para_format(self, depth):
         """引用内部段落的格式：普通样式、按深度缩进、斜体。"""
         self._set_style(WD_STYLE_NORMAL)
+        self._reselect_anchor()
         try:
             self.sel.Range.ParagraphFormat.LeftIndent = INDENT_STEP * depth
         except Exception:
@@ -884,6 +936,7 @@ class StreamingWriter:
             container = self.doc.Range(pos, pos).Paragraphs(1)
             block_end = container.Range.End
             self.doc.Range(block_end, block_end).Select()
+            self._capture_anchor()  # 表格后容器段落是后续写入的新起点
         except Exception:
             pass
 
@@ -899,22 +952,26 @@ class StreamingWriter:
     # ---------- inline 逐字写入 ----------
 
     def _type_text(self, text, animate):
-        """批量打字：按当前档位的批量大小与延时系数写入。"""
+        """批量打字：按当前档位的批量大小与延时系数写入；锚点防漂移。"""
         if not text:
             return
         batch, factor = self._gear()
         self._emitted += len(text)
         for i in range(0, len(text), batch):
             b = text[i:i + batch]
+            self._reselect_anchor()
             _com_retry(lambda: self.sel.TypeText(b))
+            self._capture_anchor()
             if animate:
                 time.sleep(self.char_delay * factor * len(b))
 
     def _insert_image(self, src, alt):
         """插入内联图片；失败时降级为 alt 文本。返回新增内容的纯文本表示。"""
+        self._reselect_anchor()
         if src:
             try:
                 self.doc.InlineShapes.AddPicture(src, False, True, self.sel.Range)
+                self._capture_anchor()
                 return "\x01"
             except Exception:
                 pass
@@ -922,7 +979,11 @@ class StreamingWriter:
             self._type_text(alt, False)
         return alt
     def _emit_inline(self, children, animate):
-        """逐字写入一个 inline 片段，处理粗体/斜体/行内代码/链接；返回纯文本。"""
+        """逐字写入一个 inline 片段，处理粗体/斜体/行内代码/链接；返回纯文本。
+
+        每个子节点开头先按锚点拉回选区：用户在生成期间点别处时，字体属性
+        与文字都必须落在已生成内容的尾部，而不是用户的光标处。
+        """
         parts = []
         link_stack = []  # (href, 链接文字起点)
         for ch in children:
@@ -933,6 +994,7 @@ class StreamingWriter:
             elif ct == "code_inline":
                 prev = None
                 try:
+                    self._reselect_anchor()
                     prev = self.sel.Font.Name
                     self.sel.Font.Name = CODE_FONT_NAME
                 except Exception:
@@ -953,15 +1015,20 @@ class StreamingWriter:
             elif ct in ("softbreak", "hardbreak"):
                 pass  # 段内换行暂按跨行连续处理
             elif ct == "strong_open":
+                self._reselect_anchor()
                 self.sel.Font.Bold = True
             elif ct == "strong_close":
+                self._reselect_anchor()
                 self.sel.Font.Bold = False
             elif ct == "em_open":
+                self._reselect_anchor()
                 self.sel.Font.Italic = True
             elif ct == "em_close":
+                self._reselect_anchor()
                 self.sel.Font.Italic = False
             elif ct == "link_open":
                 href = None
+                self._reselect_anchor()
                 try:
                     href = ch.attrGet("href")
                 except Exception:

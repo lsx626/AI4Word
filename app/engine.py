@@ -40,6 +40,7 @@ class AgentWorker(QThread):
     streamEnd = Signal()
     blockMap = Signal(str)          # 块地图文本（block_map() 的输出）
     interrupted = Signal()          # 流式被中断 → UI 给出 回滚 / 保留 / 追加
+    progress = Signal(str)          # 实时进度文本（生成中/排版中状态条）
 
     def __init__(self, word_factory=None, parent=None):
         """word_factory：测试用注入的假 Word 构造器；默认是 app.agent.get_word。"""
@@ -129,6 +130,13 @@ class AgentWorker(QThread):
         except Exception:
             pass
 
+    def _set_progress(self, text):
+        """向 UI 广播实时进度（状态条）；None 表示清空。"""
+        if text is None:
+            self.progress.emit("")
+        else:
+            self.progress.emit(str(text))
+
     def _handle(self, cmd, payload):
         try:
             if cmd in ("write", "arrange", "preset", "select_block", "save", "review", "refresh_map"):
@@ -168,6 +176,7 @@ class AgentWorker(QThread):
             return True
         self.stateChanged.emit("connecting")
         self.wordStatus.emit("正在连接 Word…")
+        self._set_progress("正在连接 Word…")
         try:
             app = self._factory()
         except Exception:
@@ -240,6 +249,7 @@ class AgentWorker(QThread):
         self.message.emit("user", prompt)
         self.stateChanged.emit("writing")
         self._writer.set_speed(self._speed)
+        self._writer.reset_anchor()  # 新一波写入：锚点从当前光标重新捕获
 
         from ai_client import ai_stream
         system = "你是一个乐于助人的助手，你总是使用 Markdown 格式进行回复。"
@@ -247,7 +257,8 @@ class AgentWorker(QThread):
             self._snap_before = self._model.snapshot()
         except Exception:
             self._snap_before = None
-        received = False
+        received = 0
+        self._set_progress("正在生成…")
         self.streamStart.emit()
         try:
             for piece in ai_stream(prompt, self._api_key, system):
@@ -256,9 +267,10 @@ class AgentWorker(QThread):
                     break
                 if not piece:
                     continue
-                received = True
+                received += len(piece)
                 self.streamChunk.emit(piece)
                 self._writer.feed(piece)
+                self._set_progress(f"正在生成… 已接收 {received} 字")
         except Exception as e:
             self.message.emit("error", f"流式生成出错：{e}")
         try:
@@ -268,6 +280,7 @@ class AgentWorker(QThread):
         self.streamEnd.emit()
         if received and not self._interrupted:
             self.message.emit("info", "已写入 Word。")
+            self._set_progress(f"已写入 Word · 共 {received} 字")
         try:
             self._model.save_blocks()
         except Exception:
@@ -307,11 +320,16 @@ class AgentWorker(QThread):
                 from ai_client import ai_stream
                 system = "你是一个乐于助人的助手，你总是使用 Markdown 格式进行回复。"
                 self._writer.set_speed(self._speed)
+                self._writer.reset_anchor()
+                received = 0
+                self._set_progress("正在追加生成…")
                 self.streamStart.emit()
                 try:
                     for piece in ai_stream(extra, self._api_key, system):
                         self.streamChunk.emit(piece)
                         self._writer.feed(piece)
+                        received += len(piece)
+                        self._set_progress(f"正在追加… 已接收 {received} 字")
                 except Exception as e:
                     self.message.emit("error", f"追加生成出错：{e}")
                 try:
@@ -360,6 +378,7 @@ class AgentWorker(QThread):
             self.message.emit("code", str(text))
 
         code = None
+        self._set_progress("正在请求 AI 生成排版代码…")
         try:
             code = gen_code(full_prompt, self._api_key, self._session,
                             block_map_fn=self._model.block_map, sink=sink)
@@ -372,6 +391,7 @@ class AgentWorker(QThread):
             self.stateChanged.emit("idle")
             return
 
+        self._set_progress("正在执行排版…")
         try:
             ok, err = run_code(code, self._exec_globals, sink=sink)
         except Exception as e:
@@ -391,6 +411,7 @@ class AgentWorker(QThread):
             self.stateChanged.emit("idle")
             return
         corrected = None
+        self._set_progress("排版失败，正在自我修复…")
         try:
             corrected = fix_code(full_prompt, code, err, self._api_key,
                                  self._session, sink=sink)
@@ -433,6 +454,7 @@ class AgentWorker(QThread):
                 pass
 
     def _cmd_review(self, on):
+        # 修订开关只翻转 TrackRevisions，不触碰文档内容，生成中切换无妨
         try:
             self._model.review_on() if on else self._model.review_off()
             self.message.emit("info", f"已{'开启' if on else '关闭'}修订模式。")
@@ -440,9 +462,13 @@ class AgentWorker(QThread):
             self.message.emit("error", f"修订模式切换失败：{e}")
 
     def _cmd_preset(self, name):
+        if self._busy:
+            self.message.emit("info", "正在处理上一条指令，请先中断再套用预设。")
+            return
         try:
-            apply_preset(self._doc, name)
-            self.message.emit("info", f"已应用「{name}」预设。")
+            result = apply_preset(self._doc, name)
+            detail = "；".join(result.get("applied", [])) if isinstance(result, dict) else ""
+            self.message.emit("info", f"已应用「{name}」预设。{detail}")
         except Exception as e:
             self.message.emit("error", f"应用预设失败：{e}")
 
@@ -453,6 +479,7 @@ class AgentWorker(QThread):
             self.message.emit("error", f"无法定位第 {index} 块：{e}")
 
     def _cmd_save(self):
+        # 存档只是把当前块模型写进文档变量，生成中调用得到的是一致的中间快照
         try:
             self._model.save_blocks()
             self.message.emit("info", "块索引已随文档存档。")

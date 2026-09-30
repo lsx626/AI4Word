@@ -118,6 +118,9 @@ class Avatar(QWidget):
 
     def _tick(self):
         # 度/秒：working 快转、idle 慢转、error 慢闪
+        win = self.window()
+        if win is not None and not win.isVisible():
+            return  # 窗口隐藏（最小化到托盘）时不必空转重绘
         speed = {"idle": 22.0, "working": 170.0, "error": 40.0}[self._state]
         self._angle = (self._angle + speed * 0.033) % 360.0
         self.update()

@@ -1,7 +1,8 @@
 ; AI4Word 安装包脚本（Inno Setup 6）
 ; 用法：ISCC build\ai4word.iss   （build\build.py 会自动调用）
 #define MyAppName "AI4Word"
-#define MyAppVersion "8.2"
+; {VERSION} 由 build/build.py 的 render_iss() 在编译安装包前替换为 app.__version__
+#define MyAppVersion "{VERSION}"
 #define MyAppPublisher "AI4Word"
 #define MyAppExeName "AI4Word.exe"
 #define MyAppDir "..\dist\AI4Word"

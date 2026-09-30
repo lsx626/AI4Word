@@ -27,7 +27,7 @@ UI_FONT = "Microsoft YaHei UI, PingFang SC, Noto Sans CJK SC, sans-serif"
 
 
 def qss():
-    """整套样式表。窗口本体是透明无边框的，背景由 paintEvent 自绘。"""
+    """整套样式表。窗口是无边框不透明的，背景由 paintEvent 自绘，圆角由 mask 切出。"""
     return f"""
     QWidget {{
         font-family: "{UI_FONT}";
@@ -35,11 +35,16 @@ def qss():
         color: {TEXT};
     }}
     QLineEdit, QTextEdit, QPlainTextEdit {{
-        background: rgba(19, 20, 25, 200);
+        background: rgba(19, 20, 25, 235);
         border: 1px solid {INK_3};
         border-radius: 10px;
         padding: 7px 10px;
         selection-background-color: {AMBER_DEEP};
+    }}
+    QTextEdit QScrollBar:vertical {{
+        background: transparent;
+        width: 8px;
+        margin: 2px 0;
     }}
     QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {{
         border: 1px solid {AMBER_DEEP};
@@ -76,6 +81,7 @@ def qss():
     }}
     QLabel#wordStatus {{ color: {TEXT_DIM}; font-size: 12px; }}
     QLabel#title {{ font-size: 14px; font-weight: 600; color: {TEXT}; }}
+    QLabel#statusBar {{ color: {AMBER}; font-size: 12px; }}
     QComboBox {{
         background: {INK_3};
         border: 1px solid {INK_4};

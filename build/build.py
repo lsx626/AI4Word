@@ -265,7 +265,8 @@ def prune(app_dir):
 
 
 def render_iss():
-    """按本机 Inno的语言文件 availability 生成 iss（缺中文 isl 时降级英文）。"""
+    """按本机 Inno的语言文件 availability 生成 iss（缺中文 isl 时降级英文）。
+    版本号从 app.__version__ 注入到 {VERSION} 占位符，避免与代码版本漂移。"""
     tpl = io.open(os.path.join("build", "ai4word.iss"), encoding="utf-8").read()
     iscc = find_iscc()
     zh = os.path.join(os.path.dirname(iscc), "Languages", "ChineseSimplified.isl") if iscc else ""
@@ -275,7 +276,8 @@ def render_iss():
     else:
         langs = 'Name: "english"; MessagesFile: "compiler:Default.isl"'
     out = os.path.abspath(os.path.join("build", "_ai4word_gen.iss"))
-    io.open(out, "w", encoding="utf-8").write(tpl.replace("{LANGUAGES}", langs))
+    rendered = tpl.replace("{LANGUAGES}", langs).replace('"{VERSION}"', f'"{__version__}"')
+    io.open(out, "w", encoding="utf-8").write(rendered)
     return out
 
 

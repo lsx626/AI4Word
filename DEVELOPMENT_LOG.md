@@ -362,6 +362,98 @@ V7.1 解决了"块写错 / 对不齐"，但流式体验仍是块级的：一个�
   中断-回滚）；打包 exe 存活复测通过；安装包 `AI4Word-Setup-8.0.exe`
   可正常生成（45MB）。
 
+### V9.0: 可用性大修（渲染可靠性 / 进度可读性 / 光标漂移防护）
+
+V8.2 打包链路打通后，真机使用暴露了一批「能用但难用」的问题：输入时悬浮窗背景
+变透明看不清、消息流高度被截断看不到进度、预设下拉逐字符、贴边吸附缺失、
+生成期间用户挪动光标导致写入位置乱跳。本轮全部从根因修复，并补回归测试。
+
+**1. 窗口渲染：不透明 + 圆角 mask（彻底消灭「输入时背景变透明」）**
+
+- 根因：`WA_TranslucentBackground` 的分层窗口在部分显卡上，子控件局部更新
+  （输入框光标闪烁 ~2Hz、头像 30fps `update()`、流式 `setText`）会留下未清除
+  的半透明区域——合成器直接把桌面透过来，越输入越透明。
+- 定位过程：用 `QWidget.grab()` 与 `QScreen.grabWindow()` 对照、像素分类
+  ASCII 图逐区域分析，发现连「控件自己画的离屏渲染」也缺内容（说明并非
+  纯合成器问题），再逐层剥离出「输入光标闪烁 / 流式 setText 才触发」的
+  局部更新路径。
+- 修复：改为**不透明窗口**（去掉 `WA_TranslucentBackground`），palette
+  的 Window 角色设为主题深色（自动填充永不露灰底），整幅 paintEvent 自绘
+  墨黑渐变，圆角由 `QRegion` mask 切出（经典 shaped-window，无分层合成，
+  任何局部更新都绝对安全）。
+- 附带修复：`reload_flags` 里 `setWindowFlags` 会重建 HWND，旧实现漏掉
+  重新注册全局热键——改设置面板后 Ctrl+Alt+Space 会失效；现在先注销再让
+  `showEvent` 在新 HWND 上重注册。
+
+**2. 消息流高度截断（「实时响应进度展示不清楚」的根因）**
+
+- 根因：`QLabel` 设了 `wordWrap` + `RichText` 后，`heightForWidth` 在
+  布局里被以错误的宽度求解（尺寸链不稳定），多行消息 label 只分到一行高
+  （16px），流式文本大半被裁掉。
+- 修复：`messages.py` 新增 `_WrapLabel`——每次 `setText` 与 `resizeEvent`
+  用 `QTextDocument` 按标签**实际宽度**确定性地算高并写回 `minimumHeight`，
+  绝不依赖布局的 heightForWidth 猜测。
+- 气泡改为全宽（Slack 式，颜色区分发送方）：长流式一行容纳 30+ 字，进度
+  最清晰；`_scroll_bottom` 追加一次 0ms 延迟兜底（布局重算在事件循环里
+  完成，同步取滚动条 maximum 可能还是旧值）。
+
+**3. 进度状态条**
+
+- 引擎新增 `progress(str)` 信号：生成中显示「正在生成… 已接收 N 字」、
+  追加补充 / 排版代码生成 / 执行 / 自我修复各阶段均有文案；窗口在标题栏
+  下新增 `statusBar` 状态条，idle 时清除。
+
+**4. 预设下拉逐字符（「套用预设不好用」的根因）**
+
+- 根因：`styles.preset_names()` 返回的是「、」连接的**字符串**，而
+  `main_window` 用 `list(preset_names())` 拆分——字符串被逐字符拆成
+  10+ 个下拉项（论/文/、/公/…），选什么都是「未知预设」报错。
+- 修复：新增 `preset_list()` 返回真列表（`preset_names` 保留给 AI 提示词），
+  下拉项 = 提示头 + 4 个真预设；应用后引擎回传 `applied` 明细
+  （正文=宋体/12磅/缩进2字；H1=黑体/22磅…）。生成中套预设会被礼貌拦截
+  （避免与写入器抢样式定义）。
+
+**5. 贴边吸附（拖动磁吸 + 松手吸附）**
+
+- 既有实现只在松手时吸附（`SNAP_MARGIN=26`），且吸附会与展开动画打架。
+- 修复：`MainWindow.drag_to()` 拖动中靠近边缘（24px）即磁性吸附、拖回
+  中间自动脱离；松手再以 40px 边距吸附一次；吸附半径与松手边距分离调参。
+- 附带修复：构造期 `_apply_expanded(instant=True)` 会把默认 (0,0) 当用户
+  位置 `_remember_geometry()` 写回 settings，**覆盖保存的窗口位置**——
+  每次启动都回到 (0,0)。现在 instant 调用不记忆；并收紧工具条
+  （修订/存档定宽、下拉按最短内容宽度）使展开窗口真正达到设计宽 492px
+  （原来被布局最小宽度顶到 572px）。
+
+**6. Word 光标漂移防护（写入锚点）**
+
+- 根因：`StreamingWriter` 全程靠 `self.sel`（Word 选区）写入，用户在
+  生成期间点一下文档别处，后半段就接在用户光标处。
+- 修复：写入器维护**锚点**（一个折叠的动态 `doc.Range`，每次写操作后
+  以选区当前位置重新捕获）；每次 `TypeText` / `TypeParagraph` / 字体属性 /
+  样式设置前先 `_reselect_anchor()` 把选区拉回锚点。会话边界由引擎调用
+  `reset_anchor()` 重置（`write_block` 作为原语入口也重置——由调用方
+  定位选区），流式路径 `_write_top_level → _write_md(keep_anchor=True)`
+  跨块延续锚点。
+- 用 FakeWord（含动态 Range 平移语义）写了 5 个回归测试：草稿中漂移、
+  结构块路径漂移、批次之间漂移、`write_block` 入口重置、会话边界重置。
+
+**7. 其他顺带修复**
+
+- `avatar.py`：窗口隐藏到托盘时 30fps 重绘空转（省电）。
+- 展开输入框 `ScrollBarAsNeeded`：多行输入可滚动（原 AlwaysOff 超高内容
+  被裁）。
+- 安装包版本号：`ai4word.iss` 的 `MyAppVersion` 改由 `build.py` 从
+  `app.__version__` 注入（`{VERSION}` 占位符），不再手写漂移。
+
+**8. 测试与验证**
+
+- 离线套件 `tests/run_offline.py`：**68 项全绿**（fake_word 35 +
+  format_runner 8 + session 4 + settings 6 + engine 4 + ui 10 +
+  writer_anchor 5）。
+- 视觉回归：`widget.grab()` 与屏幕截图像素级对照，确认消息文字真实绘制、
+  窗口 0% 透明像素、紧凑/展开/生成中/中断选择条各形态渲染正确；启动真实
+  `ai4word.pyw` 进程存活复测通过。
+
 ---
 ## 核心技术栈
 

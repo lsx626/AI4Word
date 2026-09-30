@@ -107,6 +107,11 @@ def preset_names():
     return "、".join(sorted(PRESETS))
 
 
+def preset_list():
+    """可用预设名称的列表（UI 下拉用；preset_names 是字符串，不能 list()）。"""
+    return sorted(PRESETS)
+
+
 def preset_help():
     """逐条列出预设说明。"""
     return "\n".join(f"- {name}：{spec['desc']}" for name, spec in sorted(PRESETS.items()))

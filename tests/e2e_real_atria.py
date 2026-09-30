@@ -76,29 +76,11 @@ def main_flow():
 
     print("\nblock_map:\n" + model.block_map())
 
-    exec_globals = {
-        "word_app": app, "doc": doc, "sel": sel, "model": model,
-        "block_map": model.block_map,
-        "get_block_text": model.get_block_text,
-        "replace_block": model.replace_block,
-        "insert_after": model.insert_after,
-        "insert_at_end": model.insert_at_end,
-        "delete_block": model.delete_block,
-        "replace_text": model.replace_text,
-        "select_block": model.select_block,
-        "WD_STYLE_NORMAL": WD_STYLE_NORMAL,
-        "WD_STYLE_HEADING_1": WD_STYLE_HEADING_1,
-        "WD_STYLE_HEADING_2": WD_STYLE_HEADING_2,
-        "WD_STYLE_HEADING_3": WD_STYLE_HEADING_3,
-        "WD_STYLE_LIST_BULLET": WD_STYLE_LIST_BULLET,
-        "WD_ALIGN_PARAGRAPH_LEFT": WD_ALIGN_PARAGRAPH_LEFT,
-        "WD_ALIGN_PARAGRAPH_CENTER": WD_ALIGN_PARAGRAPH_CENTER,
-        "WD_ALIGN_PARAGRAPH_RIGHT": WD_ALIGN_PARAGRAPH_RIGHT,
-        "WD_REPLACE_ALL": WD_REPLACE_ALL,
-        "WD_PRINT_VIEW": WD_PRINT_VIEW,
-        "WD_ORIENT_LANDSCAPE": WD_ORIENT_LANDSCAPE,
-        "WD_LINE_SPACING_1_5": WD_LINE_SPACING_1_5,
-    }
+    # 直接用 GUI/CLI 共享的真实执行环境（build_exec_globals），
+    # 保证测试环境与生产环境一致，避免 AI 用到测试 env 里没有的符号
+    from app.agent import build_exec_globals
+    from session import Session
+    exec_globals = build_exec_globals(app, doc, sel, model, writer, Session())
 
     # --- 阶段二：AI 代码排版（样式修改） ---
     fmt = "将所有一级标题居中，并把正文段落首行缩进 2 个字符"

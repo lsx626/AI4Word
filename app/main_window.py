@@ -1,17 +1,22 @@
 # -*- coding: utf-8 -*-
 """悬浮窗主体：紧凑胶囊 ↔ 完整面板的双形态无边框窗口。
 
-- 无边框 + 半透明 + 置顶（可设置），背景由 paintEvent 自绘圆角
+- 无边框 + 置顶（可设置）；窗口按「不透明 + 圆角 mask」渲染——早期用
+  WA_TranslucentBackground 做透明合成，输入光标闪烁 / 头像 30fps 局部
+  更新会在部分显卡上把大片背景抖成透明（漏出桌面），改成不透明窗口
+  后所有局部更新都绝对安全。
 - 紧凑态：发光头像 + 输入框 + 发送/展开按钮
 - 展开态：消息流 / 工具条（档位·修订·预设·存档）/ 块地图侧栏 / 中断选择条
-- 头像与标题栏的空白条可拖动窗口，松手吸附屏幕边缘；Ctrl+Alt+Space 召唤
+- 头像与标题栏的空白条可拖动窗口，拖动中靠近屏幕边缘磁性吸附，松手再吸附一次
+- Ctrl+Alt+Space 召唤
 """
 import ctypes
 import ctypes.wintypes as wt
 
-from PySide6.QtCore import (QEasingCurve, QEvent, QPoint, QPropertyAnimation,
-                            QRect, QSize, Qt, Signal)
-from PySide6.QtGui import (QColor, QLinearGradient, QPainter, QPen)
+from PySide6.QtCore import (QEasingCurve, QPropertyAnimation, QRect, QSize, Qt,
+                            Signal)
+from PySide6.QtGui import (QColor, QLinearGradient, QPainter, QPalette, QPainterPath,
+                           QPen, QRegion)
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QHBoxLayout,
                                QLabel, QLineEdit, QPushButton, QSplitter,
                                QTextEdit, QVBoxLayout, QWidget)
@@ -20,21 +25,25 @@ from app.avatar import Avatar
 from app.icons import (app_icon, icon_collapse, icon_expand, icon_gear, icon_keep,
                        icon_list, icon_rollback, icon_save, icon_send, icon_stop)
 from app.messages import BlockMapPanel, MessageList
-from app.theme import (AMBER, AMBER_DEEP, INK_3, INK_4, TEXT_DIM, UI_FONT)
+from app.theme import AMBER, INK_0, INK_1, INK_4, TEXT_DIM
 
 try:
-    from styles import preset_names
+    from styles import preset_list
 except Exception:  # 打包/单文件降级
-    def preset_names():
+    def preset_list():
         return ["论文", "公文", "简历", "博客"]
 
 COMPACT_SIZE = QSize(392, 66)
-EXPANDED_SIZE = QSize(470, 600)
-SNAP_MARGIN = 26
+EXPANDED_SIZE = QSize(492, 600)
+SNAP_MARGIN = 40          # 松手时离边缘多少像素内吸附
+SNAP_DRAG_MARGIN = 24     # 拖动中的磁性吸附半径（比松手小，避免拖动时黏得太死）
+SNAP_PAD = 8              # 吸附后与边缘保持的间距
+CORNER_RADIUS_COMPACT = 26
+CORNER_RADIUS_EXPANDED = 14
 
 
 class DragStrip(QWidget):
-    """标题栏里的空白拖动条：按下拖动窗口，松手吸附边缘。"""
+    """标题栏里的空白拖动条：按下拖动窗口（磁性贴边），松手吸附。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -51,7 +60,11 @@ class DragStrip(QWidget):
 
     def mouseMoveEvent(self, event):
         if self._offset is not None:
-            self._window().move(event.globalPosition().toPoint() - self._offset)
+            win = self._window()
+            if hasattr(win, "drag_to"):
+                win.drag_to(event.globalPosition().toPoint(), self._offset)
+            else:
+                win.move(event.globalPosition().toPoint() - self._offset)
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
@@ -64,14 +77,15 @@ class DragStrip(QWidget):
 
 
 class InputEdit(QTextEdit):
-    """展开态输入框：Enter 发送，Shift+Enter 换行。"""
+    """展开态输入框：Enter 发送，Shift+Enter 换行；内容超高时出现滚动条。"""
 
     def __init__(self, on_send, parent=None):
         super().__init__(parent)
         self._on_send = on_send
         self.setAcceptRichText(False)
         self.setFixedHeight(56)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setPlaceholderText("写点什么… 例如：写一篇关于秋天的散文")
 
     def keyPressEvent(self, event):
@@ -100,7 +114,7 @@ class MainWindow(QWidget):
         self._err_timer = None
 
         self.set_flags()
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self._apply_palette()
         self.setWindowTitle("AI4Word 悬浮助手")
         self.setWindowIcon(app_icon(64))
 
@@ -120,10 +134,22 @@ class MainWindow(QWidget):
             flags |= Qt.WindowStaysOnTopHint
         self.setWindowFlags(flags)
 
+    def _apply_palette(self):
+        """不透明窗口：把 Window 角色设为主题深色，避免任何自动填充露出灰底。"""
+        pal = self.palette()
+        pal.setColor(QPalette.Window, QColor(INK_1))
+        pal.setColor(QPalette.Base, QColor(INK_0))
+        pal.setColor(QPalette.Text, QColor(TEXT_DIM))
+        self.setPalette(pal)
+        self.setFont(self.font())  # 触发一次刷新，保证 QSS 字体生效
+
     def reload_flags(self):
         was_visible = self.isVisible()
+        # setWindowFlags 会重建底层窗口（新 HWND）：先注销旧窗口的热键，
+        # showEvent 里才会在新 HWND 上重新注册，否则 Ctrl+Alt+Space 失效
+        self._unregister_hotkey()
         self.set_flags()
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self._apply_palette()
         if was_visible:
             self.show()
 
@@ -159,6 +185,36 @@ class MainWindow(QWidget):
             rect.moveBottom(ag.bottom())
         return rect
 
+    # ---------- 拖动与贴边吸附 ----------
+
+    def _rounded_path(self, rect):
+        path = QPainterPath()
+        r = CORNER_RADIUS_COMPACT if not self._expanded else CORNER_RADIUS_EXPANDED
+        path.addRoundedRect(rect, r, r)
+        return path
+
+    def drag_to(self, global_pos, offset):
+        """拖动中：跟随光标；离屏幕边缘很近时磁性吸附到边缘。"""
+        rect = QRect(global_pos - offset, self.size())
+        rect = self._clamp_to_screen(rect)
+        screen = QApplication.screenAt(rect.center()) or QApplication.primaryScreen()
+        if screen is not None:
+            ag = screen.availableGeometry()
+            x, y = rect.x(), rect.y()
+            if abs(x - ag.left()) <= SNAP_DRAG_MARGIN:
+                x = ag.left() + SNAP_PAD
+            elif abs(rect.right() - ag.right()) <= SNAP_DRAG_MARGIN:
+                x = ag.right() - rect.width() - SNAP_PAD
+            if abs(y - ag.top()) <= SNAP_DRAG_MARGIN:
+                y = ag.top() + SNAP_PAD
+            elif abs(rect.bottom() - ag.bottom()) <= SNAP_DRAG_MARGIN:
+                y = ag.bottom() - rect.height() - SNAP_PAD
+            rect.moveTo(x, y)
+            rect = self._clamp_to_screen(rect)
+        # 正在播展开/收起动画时让位，避免几何互相打架
+        if self._anim is None or self._anim.state() != QPropertyAnimation.Running:
+            self.move(rect.topLeft())
+
     def snap_to_edge(self):
         """松手时若离屏幕边缘很近就吸附，并记住位置。"""
         rect = self.geometry()
@@ -168,13 +224,13 @@ class MainWindow(QWidget):
         ag = screen.availableGeometry()
         x, y = rect.x(), rect.y()
         if abs(x - ag.left()) <= SNAP_MARGIN:
-            x = ag.left() + 8
+            x = ag.left() + SNAP_PAD
         elif abs(rect.right() - ag.right()) <= SNAP_MARGIN:
-            x = ag.right() - rect.width() - 8
+            x = ag.right() - rect.width() - SNAP_PAD
         if abs(y - ag.top()) <= SNAP_MARGIN:
-            y = ag.top() + 8
+            y = ag.top() + SNAP_PAD
         elif abs(rect.bottom() - ag.bottom()) <= SNAP_MARGIN:
-            y = ag.bottom() - rect.height() - 8
+            y = ag.bottom() - rect.height() - SNAP_PAD
         if x != rect.x() or y != rect.y():
             rect.moveTo(x, y)
             rect = self._clamp_to_screen(rect)
@@ -211,6 +267,7 @@ class MainWindow(QWidget):
 
         if instant:
             self.setGeometry(target)
+            self._apply_mask()
         else:
             anim = QPropertyAnimation(self, b"geometry", self)
             anim.setDuration(190)
@@ -225,9 +282,12 @@ class MainWindow(QWidget):
             self.input_p.setFocus()
         else:
             self.input_c.setFocus()
-        self._remember_geometry()
-        self.settings.set("expanded", val)
-        self.settings.save()
+        if not instant:
+            # 构造期的 instant 调用只是恢复上次状态，不能把「默认 (0,0)」
+            # 当成用户位置记住——那会覆盖 settings 里保存的窗口位置。
+            self._remember_geometry()
+            self.settings.set("expanded", val)
+            self.settings.save()
 
     def summon(self):
         """从托盘召回：显示并闪一下。"""
@@ -327,6 +387,13 @@ class MainWindow(QWidget):
         hlay.addWidget(self.btn_settings)
         hlay.addWidget(self.btn_collapse)
 
+        # 实时状态条：生成 / 排版进度
+        self._status_label = QLabel("", self._panel)
+        self._status_label.setObjectName("statusBar")
+        self._status_label.setAlignment(Qt.AlignCenter)
+        self._status_label.setFixedHeight(18)
+        self._status_label.setVisible(False)
+
         # 消息流 + 块地图侧栏
         splitter = QSplitter(Qt.Horizontal, self._panel)
         self.messages = MessageList(splitter)
@@ -367,15 +434,15 @@ class MainWindow(QWidget):
         toolbar = QWidget(self._panel)
         blay = QHBoxLayout(toolbar)
         blay.setContentsMargins(2, 0, 2, 0)
-        blay.setSpacing(6)
+        blay.setSpacing(5)
 
         self._speed_group = QButtonGroup(toolbar)
         for i, name in enumerate(("慢", "自", "快")):
             b = QPushButton(name, toolbar)
             b.setObjectName("tool")
             b.setCheckable(True)
-            b.setFixedHeight(28)
-            b.setFixedWidth(40)
+            b.setFixedHeight(26)
+            b.setFixedWidth(32)
             self._speed_group.addButton(b, i)
             blay.addWidget(b)
         self._speed_group.idClicked.connect(self._on_speed)
@@ -391,8 +458,8 @@ class MainWindow(QWidget):
             b = QPushButton(name, toolbar)
             b.setObjectName("tool")
             b.setCheckable(True)
-            b.setFixedHeight(28)
-            b.setFixedWidth(52)
+            b.setFixedHeight(26)
+            b.setFixedWidth(44)
             self._mode_group.addButton(b, i)
             blay.addWidget(b)
         self._mode_group.idClicked.connect(self._on_mode)
@@ -403,19 +470,27 @@ class MainWindow(QWidget):
         self.btn_review = QPushButton("修订", toolbar)
         self.btn_review.setObjectName("tool")
         self.btn_review.setCheckable(True)
-        self.btn_review.setFixedHeight(28)
+        self.btn_review.setFixedHeight(26)
+        self.btn_review.setFixedWidth(46)
         self.btn_review.toggled.connect(
             lambda on: self.worker.send("review", bool(on)))
         blay.addWidget(self.btn_review)
         self.preset_combo = QComboBox(toolbar)
-        self.preset_combo.addItems(["套用预设…"] + list(preset_names()))
-        self.preset_combo.setFixedHeight(28)
+        self.preset_combo.addItems(["套用预设…"] + list(preset_list()))
+        self.preset_combo.setFixedHeight(26)
+        self.preset_combo.setMaximumWidth(110)
+        # 只按最短内容算闭合宽度（下拉列表本身仍可显示完整项名）
+        self.preset_combo.setMinimumContentsLength(4)
+        self.preset_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.preset_combo.setToolTip("一键套用成套排版样式")
         self.preset_combo.activated.connect(self._on_preset)
         blay.addWidget(self.preset_combo)
         blay.addStretch(1)
         self.btn_save = QPushButton(icon_save(), " 存档", toolbar)
         self.btn_save.setObjectName("tool")
-        self.btn_save.setFixedHeight(28)
+        self.btn_save.setFixedHeight(26)
+        self.btn_save.setFixedWidth(64)
         self.btn_save.clicked.connect(lambda: self.worker.send("save"))
         blay.addWidget(self.btn_save)
 
@@ -433,6 +508,7 @@ class MainWindow(QWidget):
         iray.addWidget(self.btn_send_p)
 
         lay.addWidget(header)
+        lay.addWidget(self._status_label)
         lay.addWidget(splitter, 1)
         lay.addWidget(self._choice_bar)
         lay.addWidget(toolbar)
@@ -451,6 +527,7 @@ class MainWindow(QWidget):
         w.stateChanged.connect(self._on_state)
         w.wordStatus.connect(self._on_word_status)
         w.message.connect(self._on_message)
+        w.progress.connect(self._on_progress)
         w.streamStart.connect(self.messages.begin_stream)
         w.streamChunk.connect(self.messages.stream_append)
         w.streamEnd.connect(self.messages.end_stream)
@@ -472,9 +549,16 @@ class MainWindow(QWidget):
             self._awaiting_choice = False
             self._extra_mode = False
             self._set_input_placeholder()
+            self._status_label.setVisible(False)
+            self._status_label.setText("")
 
     def _on_word_status(self, text):
         self.word_label.setText(text)
+
+    def _on_progress(self, text):
+        """生成/排版进度：状态条实时显示（流式气泡同时展示原文）。"""
+        self._status_label.setText(str(text))
+        self._status_label.setVisible(bool(str(text)))
 
     def _on_message(self, kind, text):
         self.messages.add(kind, text)
@@ -580,15 +664,27 @@ class MainWindow(QWidget):
     def paintEvent(self, _event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
-        r = self.rect().adjusted(1, 1, -1, -1)
-        radius = 28 if not self._expanded else 16
+        rect = self.rect()
         grad = QLinearGradient(0, 0, 0, self.height())
         grad.setColorAt(0.0, QColor("#22242d"))
         grad.setColorAt(1.0, QColor("#16181f"))
         p.setBrush(grad)
+        p.setPen(Qt.NoPen)
+        p.drawRect(rect)  # 不透明：整幅铺满，圆角由 mask 切出
+        p.setBrush(Qt.NoBrush)
         border = AMBER if self._busy else QColor(INK_4)
         p.setPen(QPen(border, 1.3))
-        p.drawRoundedRect(r, radius, radius)
+        p.drawPath(self._rounded_path(rect.adjusted(1, 1, -1, -1)))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_mask()
+
+    def _apply_mask(self):
+        """圆角形状：mask 切掉的角落不接收点击、露出桌面。不透明窗口的
+        mask 是经典 shaped-window 做法，与半透明合成无关，绝无抖动伪影。"""
+        r = self._rounded_path(self.rect().adjusted(1, 1, -1, -1))
+        self.setMask(QRegion(r.toFillPolygon().toPolygon()))
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
@@ -655,6 +751,7 @@ class MainWindow(QWidget):
         super().showEvent(event)
         if not self._hotkey:
             self._register_hotkey()
+        self._apply_mask()
 
     def hideEvent(self, event):
         super().hideEvent(event)
