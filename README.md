@@ -19,7 +19,7 @@
 | `streaming_writer.py` | 流式 Markdown 写入器：块级缓冲 + 打字机动画 + 块登记 |
 | `doc_model.py` | 块级文档模型与编辑原语（`replace_block` / `insert_after` / `delete_block` 等） |
 | `format_runner.py` | 逐语句可视化执行器：终端打印 + 选区闪烁 |
-| `tests/` | 测试：`test_fake_word.py`（离线）、`test_format_runner.py`（离线）、`smoke_real_word.py`（真实 Word 端到端） |
+| `tests/` | 测试：`test_fake_word.py`（离线）、`test_format_runner.py`（离线）、`smoke_real_word.py`（真实 Word 端到端）、`e2e_real_atria.py`（真实 Atria API + 真实 Word 全流程） |
 
 ## 前置条件
 
@@ -72,10 +72,10 @@ python main.py
 python tests/run_offline.py
 ```
 
-- 真实 Word 冒烟测试（会打开一个临时文档，结束关闭不保存）：
+- 真实 Atria API + 真实 Word 端到端（连接已运行的 Word、**新建空文档**，需要 `.env` 中的 `ATRIA_API_KEY`）：
 
 ```powershell
-python tests/smoke_real_word.py
+python tests/smoke_real_word.py\n`\n\n真实 Word 冒烟测试（会打开一个临时文档，结束关闭不保存）：\n\n`powershell
 ```
 
 ## 常见问题与排查
