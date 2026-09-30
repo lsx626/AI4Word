@@ -11,7 +11,7 @@
 ### V1.0: 基础AI写作
 
 - 使用 `python-docx` 库创建并保存Word文档
-- 调用DeepSeek API生成文本内容
+- 调用Atria API生成文本内容
 - 文本直接保存为 `.docx` 格式
 
 ### V2.0: 实时打字效果
@@ -75,13 +75,13 @@
 - `tests/test_format_runner.py`：4 个离线测试，覆盖逐语句执行、错误隔离、语法错误、空代码。
 - `tests/smoke_real_word.py`：真实 Word 端到端冒烟（流式写入、块登记、block_map、replace / insert、逐语句执行样式修改、全文替换）。
 - `tests/run_offline.py`：无 pytest 依赖的离线测试跑批器。
-- 未测：真实 DeepSeek API（需在 `.env` 提供 `DEEPSEEK_API_KEY`）；`main.py` 的完整交互循环；带真实动画延迟的视觉效果（测试中 `time.sleep` 被 monkeypatch 关闭）。
+- 未测：真实 Atria API（需在 `.env` 提供 `ATRIA_API_KEY`，可在 `.env` 用 `ATRIA_MODEL` 覆盖默认模型名）；`main.py` 的完整交互循环；带真实动画延迟的视觉效果（测试中 `time.sleep` 被 monkeypatch 关闭）。
 
 ---
 
 ## 核心技术栈
 
-- **AI服务**: DeepSeek API（SSE 流式）
+- **AI服务**: Atria（Intern AI discovery 平台，OpenAI 兼容接口，SSE 流式）
 - **Word交互**: `pywin32` (COM接口)
 - **Markdown解析**: `markdown-it-py`
 - **API通信**: `requests`
@@ -92,7 +92,7 @@
 ## 主要文件
 
 - `main.py` - 主程序：流式写作 + 交互式排版编排
-- `ai_client.py` - DeepSeek 客户端（流式 / 非流式）
+- `ai_client.py` - Atria 客户端（流式 / 非流式）
 - `streaming_writer.py` - 流式 Markdown 写入器
 - `doc_model.py` - 块级文档模型与编辑原语
 - `format_runner.py` - 逐语句可视化执行器

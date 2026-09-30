@@ -1,11 +1,11 @@
 # AI4Word
 
-> 一个调用 DeepSeek、通过 pywin32 COM **实时控制本机真实 Word** 的命令行 Agent。运行在终端，无 GUI。
+> 一个调用 Atria（Intern AI discovery 平台）、通过 pywin32 COM **实时控制本机真实 Word** 的命令行 Agent。运行在终端，无 GUI。
 > AI 生成的内容会**以真正的流式方式**一边接收一边带格式写入 Word；写入后还能**编辑已有内容**，排版过程**肉眼可见**。
 
 ## 功能概述
 
-- **真正的流式输出**：SSE 逐块接收 DeepSeek 的生成内容，按块解析 Markdown 后以打字机动画逐字写入活动的 Word 文档——AI 边想边写，Word 边出字。
+- **真正的流式输出**：SSE 逐块接收 Atria 的生成内容，按块解析 Markdown 后以打字机动画逐字写入活动的 Word 文档——AI 边想边写，Word 边出字。
 - **编辑已写入的内容**：每个写入的块都会登记成一个动态 Word Range，提供块级编辑原语（改写 / 插入 / 删除 / 全文替换），AI 通过块索引精确改稿，不动文档其余部分。
 - **可视化的排版过程**：AI 生成的排版代码被**逐语句**执行——终端实时显示每条语句与执行结果，Word 里受影响的区域会滚动进视野并黄色闪烁，排版不再是黑盒。
 - 交互式排版：支持页边距、行间距、字体字号、纸张方向等任意排版需求；执行失败时 AI 会根据错误信息自我修复并重试。
@@ -15,7 +15,7 @@
 | 文件 | 说明 |
 |------|------|
 | `main.py` | 主程序：两阶段编排（流式写作 → 交互式排版循环） |
-| `ai_client.py` | DeepSeek 客户端：`ai_stream()`（SSE 流式）与 `ai_request()`（非流式，用于代码生成） |
+| `ai_client.py` | Atria 客户端：`ai_stream()`（SSE 流式）与 `ai_request()`（非流式，用于代码生成） |
 | `streaming_writer.py` | 流式 Markdown 写入器：块级缓冲 + 打字机动画 + 块登记 |
 | `doc_model.py` | 块级文档模型与编辑原语（`replace_block` / `insert_after` / `delete_block` 等） |
 | `format_runner.py` | 逐语句可视化执行器：终端打印 + 选区闪烁 |
@@ -28,7 +28,10 @@
 - 在项目根目录准备 `.env`（模板见 `.env.example`）：
 
 ```env
-DEEPSEEK_API_KEY=你的_api_key
+ATRIA_API_KEY=你的_api_key
+
+# 可选：覆盖默认模型名（默认 atria）
+# ATRIA_MODEL=atria
 ```
 
 ## 安装
@@ -83,7 +86,7 @@ python tests/smoke_real_word.py
 
 - 程序无法连接到 Word：确认 Word 已安装且可通过 COM 被脚本控制；检查 UAC 设置。
 
-- `ai_stream` 报网络错误：检查网络与 `DEEPSEEK_API_KEY` 是否有效。
+- `ai_stream` 报网络错误：检查网络与 `ATRIA_API_KEY` 是否有效。
 
 ## 开发者说明
 

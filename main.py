@@ -146,9 +146,9 @@ def main():
 
     dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
     load_dotenv(dotenv_path=dotenv_path)
-    api_key = os.getenv("DEEPSEEK_API_KEY")
+    api_key = os.getenv("ATRIA_API_KEY")
     if not api_key:
-        print("错误：未能加载有效的 DEEPSEEK_API_KEY（请在 .env 中设置）。")
+        print("错误：未能加载有效的 ATRIA_API_KEY（请在 .env 中设置）。")
         return
 
     app = get_word()

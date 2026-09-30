@@ -1,6 +1,6 @@
 """真实 Word 冒烟测试：验证 COM 交互的关键假设。
 
-不调用 DeepSeek API，只用预制 markdown 走完整流程：
+不调用 Atria API，只用预制 markdown 走完整流程：
 流式写入 -> 块登记 -> block_map -> replace/insert/delete -> 逐语句执行。
 全部在新建的临时文档上进行，结束关闭不保存。
 """

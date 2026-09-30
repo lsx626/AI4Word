@@ -1,21 +1,31 @@
-"""DeepSeek API 客户端：支持真正的 SSE 流式输出。
+"""Atria API 客户端：支持真正的 SSE 流式输出。
 
 ai_stream 是生成内容用的流式接口：逐块 yield 内容片段，调用方可以边收边写。
 ai_request 是非流式接口，用于排版阶段让 AI 生成代码（一次性返回完整结果）。
+
+Atria 是 Intern AI（discovery 平台，https://discovery.intern-ai.org.cn/）提供的
+大模型服务，接口为 OpenAI 兼容风格：https://discovery-api.intern-ai.org.cn/v1
+模型名可用环境变量 ATRIA_MODEL 覆盖（默认 "atria"），密钥用 ATRIA_API_KEY。
 """
 import json
+import os
 
 import requests
 
-API_URL = "https://api.deepseek.com/chat/completions"
-DEFAULT_MODEL = "deepseek-chat"
+API_URL = "https://discovery-api.intern-ai.org.cn/v1/chat/completions"
+DEFAULT_MODEL = "atria"
+
+
+def _model(model):
+    """解析实际使用的模型名：参数 > 环境变量 ATRIA_MODEL > 默认值。"""
+    return model or os.getenv("ATRIA_MODEL") or DEFAULT_MODEL
 
 
 def ai_request(prompt, api_key, system_prompt, model=DEFAULT_MODEL, timeout=180):
     """非流式请求，返回完整文本；出错返回 None。"""
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
     data = {
-        "model": model,
+        "model": _model(model),
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
@@ -37,7 +47,7 @@ def ai_stream(prompt, api_key, system_prompt, model=DEFAULT_MODEL, connect=10, r
     """
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
     data = {
-        "model": model,
+        "model": _model(model),
         "stream": True,
         "messages": [
             {"role": "system", "content": system_prompt},
