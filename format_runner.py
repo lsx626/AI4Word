@@ -37,7 +37,7 @@ def flash_selection(app, seconds=0.4):
         pass
 
 
-def run_code(code, exec_globals):
+def run_code(code, exec_globals, sink=print):
     """逐语句执行 AI 生成的代码，返回 (是否成功, 错误信息)。
 
     沙箱不过则拒绝执行；通过后每条语句执行前注入一次新的步数守卫，
@@ -50,12 +50,12 @@ def run_code(code, exec_globals):
     try:
         tree = ast.parse(code)
     except SyntaxError as e:
-        print(f"  [语法错误] {e}")
+        sink(f"  [语法错误] {e}")
         return False, f"SyntaxError: {e}"
     try:
         check(tree)
     except SandboxError as e:
-        print(f"  [沙箱拦截] {e}")
+        sink(f"  [沙箱拦截] {e}")
         return False, f"SandboxError: {e}"
     guarded = instrument(tree)
 
@@ -64,7 +64,7 @@ def run_code(code, exec_globals):
     app = exec_globals.get("word_app")
     for idx, (node, gnode) in enumerate(zip(statements, guarded.body), 1):
         src = ast.unparse(node)
-        print(f"[{idx}/{total}] {src}")
+        sink(f"[{idx}/{total}] {src}")
         before = None
         if app is not None:
             try:
@@ -75,12 +75,12 @@ def run_code(code, exec_globals):
             exec_globals["__guard_step"] = make_guard()
             exec(compile(ast.Module(body=[gnode], type_ignores=[]), "<ai>", "exec"),
                  exec_globals)
-            print("    [ok]")
+            sink("    [ok]")
         except SandboxError as e:
-            print(f"    [沙箱拦截] {e}")
+            sink(f"    [沙箱拦截] {e}")
             return False, f"SandboxError: {e}"
         except Exception as e:
-            print(f"    [fail] {e}")
+            sink(f"    [fail] {e}")
             return False, f"{type(e).__name__}: {e}"
         # 可视化：该语句移动了选区 => 滚动到选区并闪烁
         if app is not None and before is not None:

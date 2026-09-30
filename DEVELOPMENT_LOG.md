@@ -282,8 +282,87 @@ V7.1 解决了"块写错 / 对不齐"，但流式体验仍是块级的：一个�
   无遗留 WINWORD 进程；冒烟启动时也会先清理上次失败遗留的文档。
 - V7.2 的 `_com_retry` 只护住 doc_model 两处 Range 调用，流式主路径未覆盖（本轮补）。
 
----
+### V8.0: 桌面悬浮窗 GUI + 一键安装包（发布级）
 
+目标：把 CLI 形态的 Agent 做成「桌面插件 / 桌宠 / 悬浮窗」——安装包一键
+安装、托盘常驻、美观的 GUI，非技术用户也能随开随用。
+
+**1. GUI 层（`app/` 包，PySide6）**
+
+- `main_window.py`：无边框 + 半透明 + 置顶主窗口，紧凑胶囊 <-> 完整面板双形态，
+  贴边吸附（snap_to_edge）与展开/收起动画；关窗即最小化到托盘。
+- `engine.py`：`AgentWorker(QThread)`——**所有 pywin32 COM 调用都在该线程内**
+  （run() 起 CoInitialize、结束 CoUninitialize），GUI 线程只通过命令队列与
+  Qt 信号交互，UI 永不卡死；支持中断（`interrupt()`）与「回滚 / 保留」选择，
+  QSharedMemory 单实例守护。
+- `messages.py`：聊天气泡（流式增量追加）+ 可点击的块地图侧栏。
+- `avatar.py`：桌宠头像——发光琥珀球 + 呼吸 + 旋转光环（idle / working 两态），
+  全部 QPainter 现绘，任意分辨率清晰。
+- `theme.py` / `icons.py`：墨黑 + 琥珀深色主题 QSS（刻意避开紫色主导方案）与
+  全套矢量图标，无外部资源依赖。
+- `settings.py` / `settings_dialog.py` / `auto_start.py` / `tray.py`：设置持久化
+  （`%APPDATA%\AI4Word\settings.json`，原子保存、损坏降级默认值）、首次启动
+  引导填密钥、HKCU Run 键自启、托盘菜单。
+- `agent.py`：从 main.py 抽出的代码生成提示词、`gen_code` / `fix_code` /
+  `build_exec_globals` / `get_word`，CLI 与 GUI 共用同一套生成与执行逻辑。
+
+**2. 核心层最小改动复用**
+
+- `format_runner.run_code(code, exec_globals, sink=print)`：print 改 sink，
+  GUI 把每条语句与执行结果送进消息流，排版过程在 GUI 里同样逐条可见。
+- `ai_client.set_base_url(url)`：设置面板可改服务地址（空串恢复默认）。
+- `main.py` 保持 CLI 入口不变，被 agent.py 接管的函数直接 import 复用
+  （`_patch_core.py` 为一次性迁移脚本，迁移完成后删除）。
+
+**3. 线程模型与 COM 的关键事实**
+
+- **COM 代理不可跨线程共享**：worker 线程内 Dispatch 的 Word 对象，主线程
+  校验时必须**独立第二次 Dispatch**，否则报 `RPC_E_WRONG_THREAD
+  (0x8001010E / -2147417842)`。`tests/smoke_engine_real_word.py` 即按此模式：
+  worker 线程写入，主线程另起连接读 `ActiveDocument.Content.Text` 验证。
+- **QThread + offscreen 离线测试**：`tests/test_engine_offline.py` patch
+  `ai_client.ai_stream` / `ai_request` 与 FakeApp，覆盖 arrange 全流程 /
+  自我修复重试 / 流式写入 / 中断回滚四例，不需要真实 Word 与网络。
+
+**4. 打包链路（`build/`）**
+
+- `icon_gen.py`：生成 7 帧 16-256px ICO。**必须先 `QApplication(sys.argv)`
+  再绘制 QPixmap，否则进程 0xC0000409 硬崩**（QPixmap 需要 QGuiApplication）。
+- `build.py`：PyInstaller `--onedir --windowed`（补 pythoncom / pywintypes /
+  win32timezone 等隐藏 import）-> `dist\AI4Word\`（约 161MB）-> ISCC 编译
+  `AI4Word-Setup-8.0.exe`（约 45MB，LZMA2 ultra + SolidCompression）。
+  iss 模板按本机是否存在 `ChineseSimplified.isl` 决定语言（本机只有
+  Default.isl，安装向导为英文，任务描述保留中文）。
+- 入口用 `ai4word.pyw` 而非 `app/__main__`：窗口化打包没有控制台，未捕获
+  异常统一写 `%APPDATA%\AI4Word\crash.log` 便于排障。
+
+**5. 本轮新踩的坑**
+
+- **exe 启动 `ImportError: DLL load failed while importing QtCore: 找不到
+  指定的程序`**：根因是 PATH 中 `D:\ProgramData\anaconda3\Library\bin`
+  的旧 Qt6Core.dll 与打包的 PySide6 版本不匹配串扰。`_strip_alien_qt_dirs()`
+  在 frozen 环境下把 `_internal\PySide6` 注册为 DLL 目录
+  （`os.add_dll_directory`）并从 PATH 剔除含 `Qt6*.dll` 的目录，修复后打包
+  exe 实测存活（启动 10s 无退出）。
+- **启动只见托盘不见悬浮窗**：`app/__main__.py` 漏了 `window.show()`。
+- **动画与吸附互相打架**：展开动画 `finished` 信号未清空 `_anim` 引用，
+  且 `snap_to_edge` 对非 Running 状态的动画也让位，导致贴边吸附永久失效。
+  修复：动画结束清 `_anim`，仅在动画 Running 时让位。
+- **PyInstaller 全量构建约 60-90s，超过 exec 会话前台超时**：必须
+  `Start-Process -RedirectStandardOutput` 后台执行 + 轮询日志文件。
+- **ISCC 写目标 exe 报 Error 32（文件占用）**：构建前需关闭残留的
+  AI4Word.exe / WINWORD.EXE 进程。
+
+**6. 测试与发布验证**
+
+- 离线套件 `tests/run_offline.py`：**57 项全绿**（fake_word 35 +
+  format_runner 8 + session 4 + settings 6 + engine 4）。
+- 真机：开发态 GUI 窗口标题「AI4Word 悬浮助手」正确；
+  `smoke_engine_real_word.py` 三段全绿（流式写入 / arrange 生成-执行-应用 /
+  中断-回滚）；打包 exe 存活复测通过；安装包 `AI4Word-Setup-8.0.exe`
+  可正常生成（45MB）。
+
+---
 ## 核心技术栈
 
 - **AI服务**: Atria（Intern AI discovery 平台，OpenAI 兼容接口，SSE 流式）
@@ -291,6 +370,8 @@ V7.1 解决了"块写错 / 对不齐"，但流式体验仍是块级的：一个�
 - **Markdown解析**: `markdown-it-py`
 - **API通信**: `requests`
 - **环境管理**: `python-dotenv`
+- **桌面GUI**: `PySide6`
+- **打包分发**: `PyInstaller` + Inno Setup 6
 
 ---
 
@@ -307,4 +388,8 @@ V7.1 解决了"块写错 / 对不齐"，但流式体验仍是块级的：一个�
 - `tests/` - 离线测试与真实 Word 冒烟测试
 - `requirements.txt` - 依赖列表
 - `README.md` - 项目说明文档
+- `ai4word.pyw` - GUI 启动入口（开发态与打包共用，兜底异常写 crash.log）
+- `app/` - 桌面悬浮窗 GUI（PySide6）：窗口 / 引擎 / 头像 / 消息流 / 设置 / 托盘
+- `build/` - 打包脚本与安装包模板（PyInstaller + Inno Setup）
+- `requirements-dev.txt` - 打包期依赖（PyInstaller / Pillow）
 - `DEVELOPMENT_LOG.md` - 开发文档

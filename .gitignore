@@ -13,3 +13,11 @@ __pycache__/
 .idea/
 .vscode/
 .DS_Store
+# 打包产物（PyInstaller / Inno Setup，均可由 build/build.py 重新生成）
+dist/
+AI4Word.spec
+build/_pyi/
+build/_ai4word_gen.iss
+build/*.log
+build/*.txt
+build/preview_*.png

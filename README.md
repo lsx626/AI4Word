@@ -1,7 +1,8 @@
 # AI4Word
 
-> 一个调用 Atria（Intern AI discovery 平台）、通过 pywin32 COM **实时控制本机真实 Word** 的命令行 Agent。运行在终端，无 GUI。
+> 一个调用 Atria（Intern AI discovery 平台）、通过 pywin32 COM **实时控制本机真实 Word** 的 AI Agent，提供**命令行**与**桌面悬浮窗 GUI** 两种形态。
 > AI 生成的内容会**以真正的流式方式**一边接收一边带格式写入 Word；写入后还能**编辑已有内容**，排版过程**肉眼可见**。
+> GUI 形态（`python ai4word.pyw`）是类桌宠 / 桌面插件的悬浮窗：托盘常驻、可开机自启、安装包一键安装，适合非技术用户日常使用。
 
 ## 功能概述
 
@@ -15,12 +16,16 @@
 - **样式预设与打字档位**：`apply_preset("论文"|"公文"|"简历"|"博客")` 一套成套排版一次落地；打字档位在逐字精确与批量流畅间切换。
 - **会话记忆与安全执行**：跨轮次记住用户排版偏好与成败历史（AI 也能主动 `remember`）；AI 生成的排版代码经 **AST 沙箱静态检查 + 循环步数护栏**（禁 import / while / 双下划线 / 危险内建）后才执行。
 - 交互式排版：支持页边距、行间距、字体字号、纸张方向等任意排版需求；执行失败时 AI 会根据错误信息自我修复并重试。
+- **桌面悬浮窗 GUI（V8.0）**：PySide6 无边框半透明置顶窗，紧凑胶囊（发光头像 + 输入框）一键展开为完整面板（消息流 / 工具条 / 块地图侧栏）；系统托盘常驻、开机自启、设置面板内填密钥即用；所有 Word COM 调用在独立 QThread 完成，UI 不卡顿，生成中可中断并选择回滚 / 保留已写入内容。
 
 ## 项目结构
 
 | 文件 | 说明 |
 |------|------|
-| `main.py` | 主程序：两阶段编排（流式写作 → 交互式排版循环） |
+| `main.py` | 主程序（CLI 形态）：两阶段编排（流式写作 → 交互式排版循环） |
+| `ai4word.pyw` | GUI 启动入口（开发态与打包后共用；窗口化打包下未捕获异常统一写 crash.log） |
+| `app/` | 桌面悬浮窗 GUI（PySide6）：双形态悬浮窗、桌宠头像、消息流 + 块地图、QThread 后台引擎、托盘、设置 |
+| `build/` | 打包脚本：`build.py`（PyInstaller + Inno Setup 一键打包）、`icon_gen.py`（图标生成）、`ai4word.iss`（安装包脚本） |
 | `ai_client.py` | Atria 客户端：`ai_stream()`（SSE 流式）与 `ai_request()`（非流式，用于代码生成） |
 | `streaming_writer.py` | 流式 Markdown 写入器：块级缓冲 + 打字机动画 + 块登记（标题 / 列表 / 代码块 / 表格） |
 | `doc_model.py` | 块级文档模型与编辑原语（`replace_block` / `insert_after` / `delete_block` 等） |
@@ -30,7 +35,7 @@
 | `sandbox.py` | AI 生成代码的 AST 静态检查与循环步数护栏 |
 | `session.py` | 会话记忆：交互历史 / 用户偏好，拼进代码生成提示词 |
 | `styles.py` | 样式预设：论文 / 公文 / 简历 / 博客成套排版 |
-| `tests/` | 测试：`test_fake_word.py`（离线 fake Word）、`test_format_runner.py`（离线）、`test_session.py`（离线会话记忆）、`smoke_real_word.py`（真实 Word 端到端）、`e2e_real_atria.py`（真实 Atria API + 真实 Word 全流程） |
+| `tests/` | 测试：`test_fake_word.py`（离线 fake Word）、`test_format_runner.py`（离线）、`test_session.py`（离线会话记忆）、`test_settings.py`（离线设置）、`test_engine_offline.py`（GUI 引擎离线）、`smoke_real_word.py`（真实 Word 端到端）、`smoke_engine_real_word.py`（GUI 引擎 × 真实 Word）、`e2e_real_atria.py`（真实 Atria API + 真实 Word 全流程） |
 
 ## 前置条件
 
@@ -41,8 +46,8 @@
 ```env
 ATRIA_API_KEY=你的_api_key
 
-# 可选：覆盖默认模型名（默认 atria）
-# ATRIA_MODEL=atria
+# 可选：覆盖默认模型名（默认 Atria-Dawn-Preview）
+# ATRIA_MODEL=Atria-Dawn-Preview
 ```
 
 ## 安装
@@ -59,6 +64,32 @@ conda activate ./.venv
 ```powershell
 pip install -r requirements.txt
 ```
+
+## 桌面悬浮窗 GUI
+
+```powershell
+python ai4word.pyw        # 或 python -m app
+```
+
+- **双形态悬浮窗**：无边框半透明、可置顶、贴边自动吸附。紧凑形态是「发光桌宠头像 + 输入框」，回车即发送指令（如「写一篇关于秋天的散文」）；点击展开为完整面板——消息流（流式增量显示 AI 回复）、工具条（打字档位 / 修订模式 / 样式预设 / 一键存档）、块地图侧栏（点击块索引定位 Word 中对应位置）。
+- **托盘与开机自启**：关窗即最小化到系统托盘（右键菜单：显示 / 隐藏 / 开机自启 / 设置 / 退出）；安装包提供「开机自动启动」选项，之后在设置面板里随时切换。
+- **首次使用**：启动后若未检测到密钥会自动弹出设置对话框，贴入 Atria API 密钥即可；设置面板也可改服务地址、模型名、窗口置顶。
+- **不卡 UI、可中断**：所有 Word COM 调用都在独立 QThread 内完成（单实例守护，重复打开会提示「已经在运行了」）；生成过程中可随时中断，并选择「回滚」或「保留」已写入的内容。
+
+## 打包与安装包
+
+一键完成「图标生成 → PyInstaller 打包 → Inno Setup 编译安装包」：
+
+```powershell
+.\.venv\Scripts\python.exe -u build\build.py
+```
+
+产物：
+
+- `dist\AI4Word\AI4Word.exe`：解压即用的程序目录（约 161MB）。
+- `dist\AI4Word-Setup-8.0.exe`：安装包（约 45MB，LZMA2 压缩）——开始菜单组、桌面快捷方式（可选）、开机自启任务（可选）、卸载时清理自启注册项。
+
+要求：Windows x64 且已安装 Microsoft Word；打包机需 Inno Setup 6（未检测到则跳过安装包步骤、仅输出 `.iss` 供自行编译）与 `requirements-dev.txt` 中的 PyInstaller / Pillow。图标由 `build/icon_gen.py` 用 QPainter + PIL 现场生成，无外部图片资源依赖。
 
 ## 使用方法
 
@@ -86,7 +117,19 @@ python tests/run_offline.py
 - 真实 Atria API + 真实 Word 端到端（连接已运行的 Word、**新建空文档**，需要 `.env` 中的 `ATRIA_API_KEY`）：
 
 ```powershell
-python tests/smoke_real_word.py\n`\n\n真实 Word 冒烟测试（会打开一个临时文档，结束关闭不保存）：\n\n`powershell
+python tests/e2e_real_atria.py
+```
+
+- 真实 Word 冒烟测试（会打开一个临时文档，结束关闭不保存）：
+
+```powershell
+python tests/smoke_real_word.py
+```
+
+- GUI 引擎 × 真实 Word（后台线程内 Dispatch，主线程独立连接校验，需提权运行 Word）：
+
+```powershell
+python tests/smoke_engine_real_word.py
 ```
 
 ## 常见问题与排查

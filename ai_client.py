@@ -12,13 +12,34 @@ import os
 
 import requests
 
-API_URL = "https://discovery-api.intern-ai.org.cn/v1/chat/completions"
+DEFAULT_API_URL = "https://discovery-api.intern-ai.org.cn/v1/chat/completions"
+API_URL = DEFAULT_API_URL
 DEFAULT_MODEL = "Atria-Dawn-Preview"
 
 
 def _model(model):
     """解析实际使用的模型名：参数 > 环境变量 ATRIA_MODEL > 默认值。"""
     return model or os.getenv("ATRIA_MODEL") or DEFAULT_MODEL
+
+
+def set_base_url(url):
+    """覆盖 API 地址（GUI 设置面板里的 base_url 优先于内置默认值）。"""
+    global API_URL
+    if not url or not str(url).strip():
+        return
+    base = str(url).strip().rstrip("/")
+    if not base:
+        return
+    if not base.endswith("/chat/completions"):
+        base = base + "/chat/completions"
+    API_URL = base
+
+
+def get_base_url():
+    """反向取出不含 /chat/completions 的 base，用于设置面板回显。"""
+    if API_URL.endswith("/chat/completions"):
+        return API_URL[: -len("/chat/completions")]
+    return API_URL
 
 
 def ai_request(prompt, api_key, system_prompt, model=DEFAULT_MODEL, timeout=180):
