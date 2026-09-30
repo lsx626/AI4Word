@@ -93,8 +93,15 @@ class DocModel:
     def replace_block(self, i, md):
         """用新的 markdown 改写第 i 块（原段落保留，清空内容后重写）。"""
         b = self.blocks[i]
-        pos = b.range.Start
-        b.range.Delete()
+        if b.kind == "table":
+            # 表格块：删掉表格本身，保留其后的容器段落作为新内容的写入点
+            try:
+                b.range.Tables(1).Delete()
+            except Exception:
+                b.range.Delete()
+        else:
+            b.range.Delete()
+        pos = b.range.Start  # 动态 Range 在删除后塌缩到删除点
         self.doc.Range(pos, pos).Select()
         # write_block 会把新块 register 到 blocks 末尾，先记下越界点再搬运到目标位置
         before_count = len(self.blocks)
@@ -109,10 +116,29 @@ class DocModel:
     def insert_after(self, i, md):
         """在第 i 块之后插入新内容。"""
         b = self.blocks[i]
-        pos = b.range.Paragraphs(1).Range.End
-        # 在下一块开头插入一个回车，造出一个空段落作为新块的容器
-        self.doc.Range(pos, pos).InsertBefore("\r")
-        self.doc.Range(pos, pos).Select()
+        pos = None
+        if b.kind == "table":
+            # 表格块的 Range 只覆盖到表格本身（不含其后的容器段落），
+            # 块内最后一个段落是表格的行尾段落——不能在行尾上插入。
+            # 容器段落紧随表格之后，新内容造在容器之后。
+            pos = b.range.End
+            try:
+                container = self.doc.Range(pos, pos).Paragraphs(1)
+                pos = container.Range.End
+                container.Range.InsertAfter("\r")
+            except Exception:
+                pass
+        else:
+            # 插入点在块占用的最后一个段落末尾（含段落标记），多段落块不会插进块中间
+            paras = b.range.Paragraphs
+            last_para = paras(paras.Count)
+            pos = last_para.Range.End
+            last_para.Range.InsertAfter("\r")
+        # 上面统一用段落的 InsertAfter 而不是 doc.Range(pos, pos).InsertBefore：
+        # 当块在文档末尾时 pos 等于 Content.End，Word 无法构造折叠在文档末端的
+        # Range（报"数值超出范围"）；InsertAfter 先把文档撑长，pos 随即合法。
+        if pos is not None:
+            self.doc.Range(pos, pos).Select()
         before_count = len(self.blocks)
         self.writer.write_block(md, animate=True)
         new_blocks = self.blocks[before_count:]
@@ -129,12 +155,39 @@ class DocModel:
         return self.insert_after(len(self.blocks) - 1, md)
 
     def delete_block(self, i):
-        """删除第 i 块（连同它的段落标记）。"""
+        """删除第 i 块（连同它占用的全部段落与段落标记）。"""
         b = self.blocks[i]
-        b.range.Paragraphs(1).Range.Delete()
+        if b.kind == "table":
+            self._delete_table_block(b)
+        else:
+            try:
+                # 删除块占用的全部段落（含末尾段落标记），避免留下孤儿空段落
+                paras = b.range.Paragraphs
+                end = paras(paras.Count).Range.End
+                self.doc.Range(b.range.Start, end).Delete()
+            except Exception:
+                b.range.Delete()
         self.blocks.pop(i)
         self.rebuild_ranges()
         return True
+
+    def _delete_table_block(self, b):
+        """删除表格块。
+
+        实测：对覆盖表格的 Range 调 Delete 只删掉文字，会留下一堆单元格
+        标记（\x07）的孤儿结构，Tables.Count 不变。必须先 Tables(1).Delete()
+        删掉表格结构本身，再把表格删除后残留的容器段落删掉。
+        """
+        try:
+            b.range.Tables(1).Delete()
+        except Exception:
+            pass
+        try:
+            # 表格删除后动态 Range 塌缩到原位置，容器段落即该位置所在段落
+            p = self.doc.Range(b.range.Start, b.range.Start).Paragraphs(1)
+            p.Range.Delete()
+        except Exception:
+            pass
 
     def replace_text(self, old, new):
         """全文查找替换。"""

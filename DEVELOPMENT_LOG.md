@@ -77,6 +77,59 @@
 - `tests/run_offline.py`：无 pytest 依赖的离线测试跑批器。
 - 未测：真实 Atria API（需在 `.env` 提供 `ATRIA_API_KEY`，可在 `.env` 用 `ATRIA_MODEL` 覆盖默认模型名）；`main.py` 的完整交互循环；带真实动画延迟的视觉效果（测试中 `time.sleep` 被 monkeypatch 关闭）。
 
+### V7.1: P0 缺陷全修复（块级写入与编辑的对齐问题）
+
+V7.0 落地了流式写入与块级编辑，但真实 Word 探针暴露出五个 P0 级缺陷：某些块类型
+**写入即丢失或损坏**，块与段落的对应关系**从未真正建立**。本轮全部修复并验证。
+
+**修复的五个缺陷（均在真实 Word 上复现并验证）：**
+
+1. **围栏代码块整体丢失**：旧 `write_block` 只处理 paragraph/heading/list，markdown-it
+   的 `fence` 是单个 token（`content` 为代码、`info` 为语言），直接被跳过。新增
+   `_write_code`：逐行 TypeParagraph + Consolas 等宽字体，`n_paras = 行数`。
+2. **有序列表产生双倍空段落且无编号**：`ordered_list_open` 与 bullet 结构同构但无分支。
+   新增分支统一样式逻辑（`WD_STYLE_LIST_NUMBER = -50`，真自动编号），每个
+   `list_item_open` 累加 `n_paras` 并 TypeParagraph。
+3. **列表 `n_paras` 永远为 1 → `rebuild_ranges` 静默放弃**：块对齐逻辑形同虚设。
+   现在 `n_paras` 按项目 / 行数精确登记，且 `insert_after` 用块**最后一个**段落定位
+   （旧实现取 `Paragraphs(1)`，多段落块会插进块中间）。
+4. **`delete_block` 留孤儿空段落**：旧实现只删块 Range（不含末尾段落标记）。现在删除
+   块占用的**全部**段落；表格块走 `_delete_table_block`（见下）。
+5. **表格变成 pipe 原文**：默认 preset 不含 table 规则（须 `MarkdownIt().enable("table")`），
+   且旧实现无 table 分支。新增 `_collect_table_rows` + `_write_table`：写成真 Word 表格
+   （Borders.Enable），块 Range 覆盖表格与容器段落，`n_paras = 表格段落数 + 1`；
+   表格创建失败时退化为逐行文本，保证内容不丢。
+
+**真实 Word COM 的新坑（本轮实测确认）：**
+
+- **`Range.Delete` 删不掉表格**：对覆盖表格的 Range 调 Delete 只删文字，留下一堆
+  单元格标记（`\x07`）的孤儿结构，`Tables.Count` 不变。表格块必须先
+  `range.Tables(1).Delete()` 删结构，再删除残留的容器段落。
+- **`Content.End` 处无法构造折叠 Range**：`doc.Range(pos, pos)` 在 pos 等于文档末端时
+  报"数值超出范围"。`insert_after` 改用段落的 `InsertAfter("\r")` 造空段落（先把文档
+  撑长，pos 随即合法）。
+- **表格块的 Range 不含容器段落**：`insert_after` 取块内最后一个段落会取到表格的
+  行尾段落，在那里 InsertAfter 报"此操作对行结尾无效"。表格块要改用表格之后的
+  容器段落作为插入锚点。
+
+**离线测试假阳性的教训：**
+
+旧的 fake Word 没有 `FakeDoc.Paragraphs` 属性，`rebuild_ranges` 里的 `doc.Paragraphs`
+抛 AttributeError 被 `except: return` 吞掉——**块对齐逻辑在离线从未执行过**，fake
+还编码了实现的错误假设（如"列表只占一个段落"）。现在 fake 带完整段落模型
+（`Paragraphs.Count` / `Paragraphs(n).Range` 按区间重叠过滤、折叠区间取包含段落），
+并新增**段落数对齐断言**（`sum(n_paras) == doc.Paragraphs.Count`，各编辑操作后检查），
+让"块与段落失去对应"在离线直接失败。表格不模拟（Word 表格语义太复杂，半吊子模拟
+等于重蹈假阳性），真路径由 `smoke_real_word.py` 覆盖。
+
+**测试覆盖（本轮新增）：**
+
+- `tests/test_fake_word.py`：8 → 13 个：新增有序列表（编号样式 -50、无双倍空段落）、
+  围栏代码块跨分片（空行不断切）、删除列表块无孤儿、列表块后插入定位、表格降级路径、
+  段落数对齐断言。
+- `tests/smoke_real_word.py`：新增有序列表、围栏代码块（Consolas 断言）、表格
+  （行数 / 列数 / 边框 / 段落计数）、删除列表块与表格块、替换表格块、表格块后插入。
+- 真实 Word 全流程实测通过（新建临时文档、结束不保存）。
 ---
 
 ## 核心技术栈
