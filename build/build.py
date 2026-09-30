@@ -75,8 +75,57 @@ def run_pyinstaller():
     if not os.path.isdir(app_dir):
         raise SystemExit("打包失败：未找到 " + app_dir)
     exe = os.path.join(app_dir, NAME + ".exe")
-    print("程序目录:", app_dir, f"({os.path.getsize(exe)} bytes exe)")
+    total = sum(os.path.getsize(os.path.join(dp, f))
+                for dp, dn, fn in os.walk(app_dir) for f in fn)
+    print(f"程序目录: {app_dir} (exe {os.path.getsize(exe)} bytes, 目录 {total // 1048576} MB)")
     return app_dir
+
+
+# 纯 QWidgets 应用用不上的大块组件（按 _internal 相对路径）
+PRUNE_FILES = [
+    "PySide6/Qt6Quick.dll", "PySide6/Qt6Qml.dll", "PySide6/Qt6QmlModels.dll",
+    "PySide6/Qt6QmlMeta.dll", "PySide6/Qt6QmlWorkerScript.dll",
+    "PySide6/Qt6Pdf.dll", "PySide6/Qt6VirtualKeyboard.dll",
+    "PySide6/Qt6Network.dll", "PySide6/QtNetwork.pyd",
+    "PySide6/opengl32sw.dll",  # 纯 QWidgets 走 GDI/Direct2D，无需软件 GL
+]
+PRUNE_DIRS = [
+    "Pythonwin",  # pywin32 自带的 IDE，运行时不需要
+]
+# (glob, 保留集合)；运行时图标全部 QPainter 现绘，只留 ico/svg 插件
+PRUNE_GLOBS = [
+    ("PySide6/translations/*.qm", ("qtbase_zh_CN.qm",)),
+    ("PySide6/plugins/imageformats/q*.dll", ("qico.dll", "qsvg.dll")),
+    ("PySide6/plugins/tls/q*.dll", ()),
+    ("PySide6/plugins/networkinformation/q*.dll", ()),
+    ("PySide6/plugins/platforminputcontexts/q*.dll", ()),
+]
+
+
+def prune(app_dir):
+    """删除打包产物中纯 QWidgets 应用用不上的组件，给安装包瘦身。"""
+    import glob as _glob
+    saved = [0]
+
+    def rm(path):
+        if os.path.exists(path):
+            saved[0] += os.path.getsize(path)
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                os.remove(path)
+
+    for rel in PRUNE_FILES:
+        rm(os.path.join(app_dir, "_internal", *rel.split("/")))
+    for rel in PRUNE_DIRS:
+        rm(os.path.join(app_dir, "_internal", *rel.split("/")))
+    for pattern, keep in PRUNE_GLOBS:
+        for path in _glob.glob(os.path.join(app_dir, "_internal", *pattern.split("/"))):
+            if os.path.basename(path) not in keep:
+                rm(path)
+    if saved[0]:
+        print(f"prune: 删除 {saved[0] / 1048576:.1f} MB无用组件")
+    return saved[0]
 
 
 def render_iss():
@@ -114,6 +163,7 @@ def make_installer(app_dir):
 def main():
     ensure_icon()
     app_dir = run_pyinstaller()
+    prune(app_dir)
     make_installer(app_dir)
     print("\n打包完成。开发态运行请用: .\\.venv\\Scripts\\python.exe ai4word.pyw")
 

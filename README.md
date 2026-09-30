@@ -86,8 +86,8 @@ python ai4word.pyw        # 或 python -m app
 
 产物：
 
-- `dist\AI4Word\AI4Word.exe`：解压即用的程序目录（约 161MB）。
-- `dist\AI4Word-Setup-8.0.exe`：安装包（约 45MB，LZMA2 压缩）——开始菜单组、桌面快捷方式（可选）、开机自启任务（可选）、卸载时清理自启注册项。
+- `dist\AI4Word\AI4Word.exe`：解压即用的程序目录（约 106MB，已裁剪 QML / PDF / 软件渲染 / 多余翻译与插件等无用组件）。
+- `dist\AI4Word-Setup-8.1.exe`：安装包（约 31MB，LZMA2 压缩，简体中文安装向导，打包机缺中文 isl 时自动降级英文）——开始菜单组、桌面快捷方式（可选）、开机自启任务（可选）、卸载时清理自启注册项。
 
 要求：Windows x64 且已安装 Microsoft Word；打包机需 Inno Setup 6（未检测到则跳过安装包步骤、仅输出 `.iss` 供自行编译）与 `requirements-dev.txt` 中的 PyInstaller / Pillow。图标由 `build/icon_gen.py` 用 QPainter + PIL 现场生成，无外部图片资源依赖。
 
