@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 虚拟环境（conda 建在项目目录下）
+.venv/
+
+# 环境变量与密钥
+.env
+
+# IDE / 系统
+.idea/
+.vscode/
+.DS_Store
