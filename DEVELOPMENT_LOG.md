@@ -206,6 +206,84 @@ V7.1 解决了"块写错 / 对不齐"，但流式体验仍是块级的：一个�
 
 ---
 
+### V7.3: 修订模式 + 持久化 + 快照撤销/事务 + 沙箱 + 预设 + 图片 + 长文档布局 + 会话记忆
+
+**1. 修订模式**
+
+- `review_on()` 打开 TrackRevisions，AI 的编辑以 Word 修订形式落地，用户逐条拍板；
+  `accept_block_revisions(i)` / `reject_block_revisions(i)` 倒序处理块内修订
+  （拒绝插入块即回滚新增内容），随后 `rebuild_ranges()` 重建定位。
+
+**2. 块级快照撤销与事务**
+
+- `model_undo()` / `model_redo()`：整篇快照级撤销/重做，与 Word 编辑栈的
+  `undo(times)`（按编辑记录回退）互补。
+- `begin_txn()` / `commit_txn()` / `rollback_txn()`：多步编辑原子化，失败整体回滚。
+
+**3. 块模型持久化：CustomDocumentProperties → doc.Variables**
+
+- 原存档走 `CustomDocumentProperties.Add`，真实 Word 16.0 下**所有参数形态恒返回
+  E_INVALIDARG**（晚期绑定、无类型信息，gen_py 亦无包装可用）。改用 `doc.Variables`：
+  探针实测 `Variables.Add(name, value)` / `Variables(name).Value` / `.Delete()` 全部
+  可用、保存重开后仍在；单值容量 ≥50000 字符（200000 失败），分片 `_PROP_CHUNK=8000`
+  留余量；同名 Add 抛"Variable 名称已经存在"，故 `_set_doc_variable` 先赋值、
+  失败再 Add，必要时删除重建。`load_blocks()` 重开同一文档时按 n_paras 重新对齐
+  段落、重建 Range，块索引语义跨会话保留。
+
+**4. 内联图片与"草稿期图片被删"根因**
+
+- 结构块内 `InlineShapes.AddPicture`（markdown-it 把路径中的 `\` 编码为 `%5C`，
+  src 需 `unquote` 后再解析）；草稿期跨分片到达的图片在提交时替换草稿文本。
+- 被删根因：`_flash(rng)` 清高亮后选区覆盖整个块（含内联图片），随后的
+  `TypeParagraph` 会"替换选区"、连删图片。两处修复：`_collapse_selection()` 在
+  `_ensure_new_paragraph` 打段前把选区折叠到末尾（`_start_draft` 与
+  `_write_top_level` 两路都覆盖）；`_flash` 清高亮后把光标恢复为块尾折叠点。
+
+**5. 长文档布局**
+
+- `insert_toc()` 自动目录、`set_header(text)` / `set_footer(text)`、
+  `insert_page_break()` 分页符。
+
+**6. 安全沙箱 sandbox.py（新模块）**
+
+- `run_code` 直接执行 LLM 生成的代码，"逐语句可视化看见"挡不住真正的危险动作。
+  exec 前静态检查：禁 import / while / with / 双下划线属性 / 危险内建（open、exec、
+  eval、getattr 等）；循环护栏给 for 体头部注入步数计数，超限抛 SandboxError，
+  把死循环掐死在可承受范围内。
+
+**7. 样式预设 styles.py（新模块）**
+
+- `apply_preset("论文"|"公文"|"简历"|"博客")`：正文（字体/字号/首行缩进/行距）与
+  1-3 级标题成套经修改样式定义一次落地，替代逐属性硬改；`preset_names()` 列清单。
+
+**8. 会话记忆 session.py（新模块）**
+
+- 最近 8 轮交互（指令 + 成败标记）与 10 条用户偏好（成功指令里的排版关键词
+  自动升格，AI 亦可 `remember(note)` 主动记录），`memory_prompt()` 拼进 gen_code
+  提示词；无记忆时返回空串。
+
+**9. 打字档位**
+
+- `_gear()` 在低速逐字（精确）与高速批量（流畅）间切换，兼顾"看得见"与"写得快"。
+
+**10. COM 重试加固**
+
+- streaming_writer 的 8 处样式赋值、12 处 `TypeParagraph` 与 `TypeText` 全部包进
+  `doc_model._com_retry`（Word 重分页/界面刷新时以 RPC_E_CALL_REJECTED 拒绝调用，
+  重试 6 次、逐次退避）。
+- `_com_retry` 的退避 sleep 在模块导入时捕获真实 `time.sleep`：测试为加速而
+  monkeypatch `time.sleep` 时，重试退避仍真实生效——否则 6 次重试零间隔空转必败。
+
+**11. 本轮新踩的坑**
+
+- **僵尸 Word 进程污染 Dispatch**：冒烟崩溃遗留的 Word 进程会被
+  `Dispatch("Word.Application")` 复用，其实例状态会持续拒绝 COM 调用
+  （表现：`Styles()` 取值被拒、重试 6 次仍败，与业务代码无关）。冒烟后须确认
+  无遗留 WINWORD 进程；冒烟启动时也会先清理上次失败遗留的文档。
+- V7.2 的 `_com_retry` 只护住 doc_model 两处 Range 调用，流式主路径未覆盖（本轮补）。
+
+---
+
 ## 核心技术栈
 
 - **AI服务**: Atria（Intern AI discovery 平台，OpenAI 兼容接口，SSE 流式）
@@ -223,6 +301,9 @@ V7.1 解决了"块写错 / 对不齐"，但流式体验仍是块级的：一个�
 - `streaming_writer.py` - 流式 Markdown 写入器
 - `doc_model.py` - 块级文档模型与编辑原语
 - `format_runner.py` - 逐语句可视化执行器
+- `sandbox.py` - AI 生成代码的 AST 静态检查与循环步数护栏
+- `session.py` - 会话记忆（交互历史 / 用户偏好）
+- `styles.py` - 样式预设（论文 / 公文 / 简历 / 博客）
 - `tests/` - 离线测试与真实 Word 冒烟测试
 - `requirements.txt` - 依赖列表
 - `README.md` - 项目说明文档

@@ -58,3 +58,33 @@ if __name__ == "__main__":
     test_syntax_error()
     test_empty()
     print("\nformat_runner 测试全部通过。")
+
+def test_sandbox_rejects_import():
+    g = {"word_app": None}
+    ok, err = run_code("import os", g)
+    assert not ok and "SandboxError" in err, (ok, err)
+    print("ok: 沙箱拒绝 import")
+
+
+def test_sandbox_rejects_while():
+    g = {"word_app": None, "x": 0}
+    ok, err = run_code("while x < 5:\n    x += 1", g)
+    assert not ok and "SandboxError" in err, (ok, err)
+    print("ok: 沙箱拒绝 while 无界循环")
+
+
+def test_sandbox_rejects_dunder():
+    g = {"word_app": None}
+    ok, err = run_code("a = 1\nprint(a.__class__)", g)
+    assert not ok and "SandboxError" in err, (ok, err)
+    print("ok: 沙箱拒绝双下划线属性")
+
+
+def test_sandbox_guard_limit():
+    app = FakeApp()
+    g = {"word_app": app, "log": []}
+    ok, err = run_code("for i in range(1000000):\n    log.append(i)", g)
+    assert not ok and "SandboxError" in err and "上限" in err, (ok, err)
+    assert len(g["log"]) < 100000, "护栏应该在有限步内掐死循环"
+    print(f"ok: 循环步数护栏（{len(g['log'])} 步后终止）")
+

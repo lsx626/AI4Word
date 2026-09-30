@@ -9,19 +9,23 @@
    缓冲后一次写入。
 
 支持的块级 markdown：段落、1-3 级标题、有序与无序列表（含嵌套，按层级缩进）、
-引用块、围栏代码块、表格、水平线；内联支持粗体 / 斜体 / 行内代码 / 超链接。
+引用块、围栏代码块、表格、水平线；内联支持粗体 / 斜体 / 行内代码 / 超链接 /
+图片（![alt](src)，插入失败降级为 alt 文本）。
 
 体感细节：
 - 停顿即思考：流式片段间隔超过阈值时，下一块开头先停顿，模拟斟酌。
-- 打字按批次（默认 6 字符）一次 COM 调用，减少往返又保留动画感。
+- 打字按批次一次 COM 调用，批次大小与延时由档位决定（set_speed：auto/slow/fast）。
 - 写操作前后通知 DocWatch 置忙并重置基线，避免把 AI 自己的写入误报成用户改动。
 
 每个块占用的段落数 n_paras 都被精确登记，供 DocModel 的块对齐使用。
 """
 import re
 import time
+from urllib.parse import unquote
 
 from markdown_it import MarkdownIt
+
+from doc_model import _com_retry
 
 # --- Word COM 常量 ---
 WD_STYLE_NORMAL = -1        # 普通段落
@@ -47,7 +51,24 @@ _STRUCT_LINE_RE = re.compile(
 # 但分片尚不完整——先缓冲，等更多字符到达再定性
 _AMBIGUOUS_RE = re.compile(r"^\s*(?:#{1,6}|[-*+]|>|`{1,2}|\d+[.)]?|)$")
 _MARKER_CHARS = "*/`"       # 可能构成内联标记的字符
-_TYPE_BATCH = 6             # 每次 COM 调用批量输入的字符数
+_TYPE_BATCH = 6             # 草稿缓冲刷新阈值（auto 档每批 COM 调用字符数）
+_TYPE_BATCH_SLOW = 6        # slow 档批量
+_TYPE_BATCH_FAST = 40       # fast 档批量（接近一次性写入）
+_FAST_CHARS = 200           # auto 档累计输出超过此字符数即升 fast 档
+_DELAY_FACTOR_FAST = 0.2    # fast 档延时系数（相对 char_delay）
+_IMAGE_RE = re.compile(r"!\[([^\]\n]*)\]\(([^)\n]*)\)")
+
+
+def _decode_src(src):
+    r"""markdown-it 会对 URL 做百分号编码（Windows 路径的反斜杠变成 %5C），
+    真实文件路径需要还原后才能交给 Word。"""
+    if not src:
+        return src
+    try:
+        return unquote(src)
+    except Exception:
+        return src
+
 _THINK_GAP = 0.5            # 超过这么多秒的片段间隔视为"思考"
 _THINK_MAX = 1.2            # 思考停顿上限（秒）
 
@@ -74,10 +95,21 @@ def _find_boundary(buf):
     return None
 
 
+def _slice_md(md_text, md_slice):
+    """按 markdown-it token 的 map [首行, 末行开区间) 从整段 md 中切出本块的行。"""
+    if not md_slice:
+        return md_text
+    lines_md = md_text.split("\n")
+    first, last = md_slice[0], md_slice[1]
+    if 0 <= first <= last <= len(lines_md):
+        return "\n".join(lines_md[first:last]).strip()
+    return md_text
+
+
 class _BlockDraft:
     """正在写入的一个块的临时记录。"""
 
-    def __init__(self, kind, level, start, n_paras=1):
+    def __init__(self, kind, level, start, n_paras=1, md_slice=None):
         self.kind = kind
         self.level = level
         self.start = start
@@ -85,9 +117,11 @@ class _BlockDraft:
         self.text_parts = []
         self.n_paras = n_paras  # 该块占用的段落数（列表 = 项目数，代码 = 行数）
         self.indents = []  # 列表每个项目段落的缩进值（按层级）
+        self.md_slice = md_slice  # 本块 md 在整段中的行区间（token.map）
 
     def finish(self, doc, md, model, registered):
         rng = doc.Range(self.start, self.end)
+        md = _slice_md(md, self.md_slice)
         block = model.register(self.kind, self.level, md, "".join(self.text_parts), rng, self.n_paras)
         registered.append(block)
 
@@ -116,12 +150,31 @@ class StreamingWriter:
         self.sel = sel
         self.model = model
         self.char_delay = char_delay
+        self._speed = "auto"   # 打字档位：auto / slow / fast
+        self._emitted = 0      # auto 档累计输出字符数（超阈值自动加速）
         self.pending = ""
         self._first_block = True
         self._draft = None
         self._think = 0.0
         self._last_feed = None
         self._md = MarkdownIt().enable("table")  # 启用 GFM 表格规则
+
+    def set_speed(self, mode):
+        """设置打字档位：auto（先慢后快）/ slow / fast。"""
+        if mode not in ("auto", "slow", "fast"):
+            return
+        self._speed = mode
+        self._emitted = 0
+
+    def _gear(self):
+        """当前档位的 (批量大小, 延时系数)。"""
+        if self._speed == "fast":
+            return _TYPE_BATCH_FAST, _DELAY_FACTOR_FAST
+        if self._speed == "slow":
+            return _TYPE_BATCH_SLOW, 1.0
+        if self._emitted > _FAST_CHARS:
+            return _TYPE_BATCH_FAST, _DELAY_FACTOR_FAST
+        return _TYPE_BATCH, 1.0
 
     # ---------- 流式输入 ----------
 
@@ -206,6 +259,7 @@ class StreamingWriter:
 
     def _start_draft(self):
         """开始一段灰色实时草稿。"""
+        self._emitted = 0
         self._ensure_new_paragraph()
         try:
             base_name = self.sel.Font.Name  # 基础字体：行内代码结束后恢复用
@@ -214,7 +268,7 @@ class StreamingWriter:
         d = _DraftState(self.sel.Range.Start, base_name)
         d.raw = self.pending
         self.pending = ""
-        self.sel.Range.Style = self.sel.Document.Styles(WD_STYLE_NORMAL)
+        self._set_style(WD_STYLE_NORMAL)
         try:
             self.sel.Font.ColorIndex = WD_COLOR_GRAY25
         except Exception:
@@ -240,7 +294,12 @@ class StreamingWriter:
             ln = raw.rfind("\n", d.emitted, limit - hold_back)
             if ln != -1 and _AMBIGUOUS_RE.match(raw[ln + 1:]):
                 hold_back = limit - ln
-        self._draft_process(limit - hold_back, final=False)
+        if b is None:
+            # 未完整的图片语法整体攒住：宁可等下片输入，也不把 ![ 打成正文
+            ip = raw.rfind("![", d.emitted, limit - hold_back)
+            if ip != -1 and not _IMAGE_RE.match(raw[ip:limit - hold_back]):
+                hold_back = limit - ip
+        self._draft_process(limit - hold_back, final=False, can_hold=(b is None))
         if b is None:
             return
         rest = raw[b + 1:]
@@ -250,11 +309,23 @@ class StreamingWriter:
         self.pending = rest
         self._draft = None
 
-    def _draft_process(self, limit, final):
-        """把 raw[emitted:limit] 过一遍增量标记状态机并打出。"""
+    def _draft_process(self, limit, final, can_hold=False):
+        """把 raw[emitted:limit] 过一遍增量标记状态机并打出。
+
+        can_hold 为真（未到块边界）时，行首不完整的图片语法攒住等下片输入。
+        """
         d = self._draft
         raw = d.raw
         while d.emitted < limit:
+            # 完整图片语法：逐字打出 alt（块提交时整体替换为真实图片）
+            m = _IMAGE_RE.match(raw, d.emitted)
+            if m and m.end() <= limit:
+                for c in m.group(1):
+                    self._draft_type(c)
+                d.emitted = m.end()
+                continue
+            if can_hold and raw.startswith("![", d.emitted):
+                break  # 图片语法未完整，攒住等更多输入
             ch = raw[d.emitted]
             if ch in _MARKER_CHARS:
                 d.hold += ch
@@ -329,8 +400,60 @@ class StreamingWriter:
         except Exception:
             pass
         self._normalize_inline(rng, md, d.plain, d.start)
+        if _IMAGE_RE.search(md):
+            end = self._commit_images(d.start, end, md)
+            rng = self.doc.Range(d.start, end)
         self.model.register("paragraph", 0, md, d.plain, rng, 1)
 
+    def _commit_images(self, start, plain_end, md):
+        """把草稿期打出 alt 的图片替换为真实内联图片；返回新的块尾。
+
+        按 inline 子节点累计偏移：图片位置 = 块起点 + 已累计内容长度 + 长度差。
+        alt 文本与文档一致时删除并插入 InlineShape；插入失败时把 alt 打回去。
+        """
+        try:
+            tokens = self._md.parse(md)
+        except Exception:
+            return plain_end
+        for tok in tokens:
+            if tok.type != "inline" or not tok.children:
+                continue
+            off = 0
+            delta = 0
+            for ch in tok.children:
+                ct = ch.type
+                if ct not in ("text", "code_inline", "image"):
+                    continue
+                content = ch.content or ""
+                if ct == "image":
+                    pos = start + off + delta
+                    try:
+                        rng = self.doc.Range(pos, pos + len(content))
+                        if rng.Text == content:
+                            src = None
+                            try:
+                                src = _decode_src(ch.attrGet("src"))
+                            except Exception:
+                                src = None
+                            rng.Delete()
+                            inserted = False
+                            if src:
+                                try:
+                                    self.doc.InlineShapes.AddPicture(
+                                        src, False, True, self.doc.Range(pos, pos))
+                                    inserted = True
+                                except Exception:
+                                    inserted = False
+                            if inserted:
+                                delta += 1 - len(content)
+                            else:
+                                self.doc.Range(pos, pos).Select()
+                                self._type_text(content, animate=False)
+                    except Exception:
+                        pass
+                off += len(content)
+            break  # 草稿只含一个段落
+        return plain_end + delta
     def _normalize_inline(self, rng, md, plain, start):
         """用完整解析校验草稿的字体属性：文本一致时按解析结果重设粗体/斜体/字体。
 
@@ -352,6 +475,8 @@ class StreamingWriter:
                 if ct in ("text", "code_inline"):
                     nm = CODE_FONT_NAME if ct == "code_inline" else None
                     runs.append((ch.content, bold, italic, nm))
+                elif ct == "image":
+                    runs.append((ch.content or "", bold, italic, None))
                 elif ct == "strong_open":
                     bold = True
                 elif ct == "strong_close":
@@ -413,6 +538,16 @@ class StreamingWriter:
             pos = nl + 1 if nl != -1 else len(buf)
         return None, None
 
+    def _set_style(self, style):
+        """设置当前段落样式；Word 忙（重分页/刷新）被拒绝时退避重试。"""
+        def apply():
+            self.sel.Range.Style = self.sel.Document.Styles(style)
+        _com_retry(apply)
+
+    def _type_paragraph(self):
+        """插入段落分隔；Word 忙时退避重试。"""
+        _com_retry(lambda: self.sel.TypeParagraph())
+
     def _write_top_level(self, md_text):
         md_text = (md_text or "").strip()
         if not md_text:
@@ -420,13 +555,28 @@ class StreamingWriter:
         self._ensure_new_paragraph()
         self.write_block(md_text, animate=True)
 
+    def _collapse_selection(self):
+        """流式写入前把非折叠选区折叠到末尾。
+
+        _flash 等操作会把选区覆盖在整个块上；此时 TypeText / TypeParagraph
+        会"替换"选区内容（连带删除其中的内联图片）。折叠到选区末尾可保留
+        原有内容，让新内容接在后面。
+        """
+        try:
+            sel = self.sel
+            if sel.Start != sel.End:
+                sel.Collapse(0)  # wdCollapseEnd
+        except Exception:
+            pass
+
     def _ensure_new_paragraph(self):
         """新块开头：先消费"思考"停顿，非首块插入段落分隔。"""
         if self._think:
             time.sleep(self._think)
             self._think = 0.0
+        self._collapse_selection()
         if not self._first_block:
-            self.sel.TypeParagraph()
+            self._type_paragraph()
         self._first_block = False
 
     # ---------- 块写入 ----------
@@ -440,6 +590,7 @@ class StreamingWriter:
         md_text = (md_text or "").strip()
         if not md_text:
             return []
+        self._emitted = 0
         tokens = self._md.parse(md_text)
         registered = []
         started = False   # 本次调用是否已写出首个块（用于块间 TypeParagraph）
@@ -478,28 +629,28 @@ class StreamingWriter:
                     # 引用内部的段落：每段一行，缩进随引用深度
                     if current is not None and current.kind == "quote":
                         if current.n_paras > 0:
-                            self.sel.TypeParagraph()
+                            self._type_paragraph()
                         current.n_paras += 1
                         self._quote_para_format(quote_depth)
                 else:
                     close_current()
                     if started:
-                        self.sel.TypeParagraph()
+                        self._type_paragraph()
                     started = True
-                    self.sel.Range.Style = self.sel.Document.Styles(WD_STYLE_NORMAL)
-                    current = _BlockDraft("paragraph", 0, self.sel.Range.Start)
+                    self._set_style(WD_STYLE_NORMAL)
+                    current = _BlockDraft("paragraph", 0, self.sel.Range.Start, md_slice=tok.map)
                 i += 1
                 continue
             if t == "heading_open":
                 close_current()
                 if started:
-                    self.sel.TypeParagraph()
+                    self._type_paragraph()
                 started = True
                 level = int(tok.tag[1])
                 style = {1: WD_STYLE_HEADING_1, 2: WD_STYLE_HEADING_2,
                          3: WD_STYLE_HEADING_3}.get(level, WD_STYLE_NORMAL)
-                self.sel.Range.Style = self.sel.Document.Styles(style)
-                current = _BlockDraft(f"heading{level}", level, self.sel.Range.Start)
+                self._set_style(style)
+                current = _BlockDraft(f"heading{level}", level, self.sel.Range.Start, md_slice=tok.map)
                 i += 1
                 continue
             if t in ("bullet_list_open", "ordered_list_open"):
@@ -508,11 +659,11 @@ class StreamingWriter:
                     # 顶层列表：结束上一块，开始列表块；嵌套列表只是深度变化
                     close_current()
                     if started:
-                        self.sel.TypeParagraph()
+                        self._type_paragraph()
                     started = True
                     list_style = (WD_STYLE_LIST_BULLET if t == "bullet_list_open"
                                   else WD_STYLE_LIST_NUMBER)
-                    current = _BlockDraft("list", 0, self.sel.Range.Start, n_paras=0)
+                    current = _BlockDraft("list", 0, self.sel.Range.Start, n_paras=0, md_slice=tok.map)
                 i += 1
                 continue
             if t in ("bullet_list_close", "ordered_list_close"):
@@ -527,10 +678,10 @@ class StreamingWriter:
                 # 缩进赋值见 paragraph_close 与 close_current 的注释）
                 if current is not None and current.kind == "list":
                     if current.n_paras > 0:
-                        self.sel.TypeParagraph()
+                        self._type_paragraph()
                     current.n_paras += 1
                     current.indents.append(INDENT_STEP * max(0, list_depth - 1))
-                    self.sel.Range.Style = self.sel.Document.Styles(list_style)
+                    self._set_style(list_style)
                 i += 1
                 continue
             if t == "paragraph_close":
@@ -549,10 +700,10 @@ class StreamingWriter:
                 if quote_depth == 1:
                     close_current()
                     if started:
-                        self.sel.TypeParagraph()
+                        self._type_paragraph()
                     started = True
-                    self.sel.Range.Style = self.sel.Document.Styles(WD_STYLE_NORMAL)
-                    current = _BlockDraft("quote", 0, self.sel.Range.Start, n_paras=0)
+                    self._set_style(WD_STYLE_NORMAL)
+                    current = _BlockDraft("quote", 0, self.sel.Range.Start, n_paras=0, md_slice=tok.map)
                 i += 1
                 continue
             if t == "blockquote_close":
@@ -568,15 +719,15 @@ class StreamingWriter:
             if t == "hr":
                 close_current()
                 if started:
-                    self.sel.TypeParagraph()
+                    self._type_paragraph()
                 started = True
-                self._write_hr(md_text, registered)
+                self._write_hr(md_text, registered, tok.map)
                 i += 1
                 continue
             if t == "fence":
                 close_current()
                 if started:
-                    self.sel.TypeParagraph()
+                    self._type_paragraph()
                 started = True
                 self._write_code(tok, md_text, registered)
                 i += 1
@@ -584,10 +735,10 @@ class StreamingWriter:
             if t == "table_open":
                 close_current()
                 if started:
-                    self.sel.TypeParagraph()
+                    self._type_paragraph()
                 started = True
                 rows, i = self._collect_table_rows(tokens, i + 1)
-                self._write_table(rows, md_text, registered)
+                self._write_table(rows, md_text, registered, tok.map)
                 continue
             if t == "inline" and tok.children and current is not None:
                 current.text_parts.append(self._emit_inline(tok.children, animate))
@@ -607,7 +758,7 @@ class StreamingWriter:
 
     def _quote_para_format(self, depth):
         """引用内部段落的格式：普通样式、按深度缩进、斜体。"""
-        self.sel.Range.Style = self.sel.Document.Styles(WD_STYLE_NORMAL)
+        self._set_style(WD_STYLE_NORMAL)
         try:
             self.sel.Range.ParagraphFormat.LeftIndent = INDENT_STEP * depth
         except Exception:
@@ -619,13 +770,13 @@ class StreamingWriter:
 
     # ---------- 各类块的写入 ----------
 
-    def _write_hr(self, md_text, registered):
+    def _write_hr(self, md_text, registered, md_slice=None):
         """水平线：优先用段落底边框；无边框支持时降级为字符横线。"""
-        self.sel.Range.Style = self.sel.Document.Styles(WD_STYLE_NORMAL)
+        self._set_style(WD_STYLE_NORMAL)
         start = self.sel.Range.Start
         try:
             self.sel.Range.ParagraphFormat.Borders(WD_BORDER_BOTTOM).LineStyle = 1
-            draft = _BlockDraft("hr", 0, start, n_paras=1)
+            draft = _BlockDraft("hr", 0, start, n_paras=1, md_slice=md_slice)
             draft.end = self.sel.Range.Start
             draft.text_parts.append("")
             draft.finish(self.doc, md_text, self.model, registered)
@@ -634,26 +785,26 @@ class StreamingWriter:
             pass  # 无边框支持，走字符降级
         line = "―" * 12
         self._type_text(line, animate=True)
-        draft = _BlockDraft("hr", 0, start, n_paras=1)
+        draft = _BlockDraft("hr", 0, start, n_paras=1, md_slice=md_slice)
         draft.end = self.sel.Range.Start
         draft.text_parts.append(line)
         draft.finish(self.doc, md_text, self.model, registered)
 
     def _write_code(self, tok, md_text, registered):
         """围栏代码块：等宽字体逐行写入，每行一个段落。"""
-        self.sel.Range.Style = self.sel.Document.Styles(WD_STYLE_NORMAL)
+        self._set_style(WD_STYLE_NORMAL)
         start = self.sel.Range.Start
         lines = tok.content.rstrip("\n").split("\n")
         for li, line in enumerate(lines):
             if li:
-                self.sel.TypeParagraph()
+                self._type_paragraph()
             self._type_text(line, animate=True)
         end = self.sel.Range.Start
         try:
             self.doc.Range(start, end).Font.Name = CODE_FONT_NAME
         except Exception:
             pass  # 字体设置失败不影响内容写入
-        draft = _BlockDraft("code", 0, start, n_paras=max(1, len(lines)))
+        draft = _BlockDraft("code", 0, start, n_paras=max(1, len(lines)), md_slice=tok.map)
         draft.end = end
         draft.text_parts.append(tok.content)
         draft.finish(self.doc, md_text, self.model, registered)
@@ -682,7 +833,7 @@ class StreamingWriter:
             i += 1
         return rows, i + 1  # 跳过 table_close
 
-    def _write_table(self, rows, md_text, registered):
+    def _write_table(self, rows, md_text, registered, md_slice=None):
         """把收集到的表格行写成一个真正的 Word 表格并登记为块。
 
         Word 语义（实测）：在光标所在空段落插入表格后，原段落被劈开成表格后的
@@ -709,9 +860,9 @@ class StreamingWriter:
             # 表格创建失败时退化为逐行文本，保证内容不丢
             for r, row in enumerate(rows):
                 if r:
-                    self.sel.TypeParagraph()
+                    self._type_paragraph()
                 self._type_text(" | ".join(row), animate=True)
-            draft = _BlockDraft("table", 0, insert_at, n_paras=len(rows))
+            draft = _BlockDraft("table", 0, insert_at, n_paras=len(rows), md_slice=md_slice)
             draft.end = self.sel.Range.Start
             draft.text_parts.append(" / ".join(" | ".join(r) for r in rows))
             draft.finish(self.doc, md_text, self.model, registered)
@@ -740,7 +891,7 @@ class StreamingWriter:
             table_paras = tbl.Range.Paragraphs.Count
         except Exception:
             table_paras = 1
-        draft = _BlockDraft("table", 0, tbl.Range.Start, n_paras=table_paras + 1)
+        draft = _BlockDraft("table", 0, tbl.Range.Start, n_paras=table_paras + 1, md_slice=md_slice)
         draft.end = block_end
         draft.text_parts.append(" / ".join(" | ".join(r) for r in rows))
         draft.finish(self.doc, md_text, self.model, registered)
@@ -748,15 +899,28 @@ class StreamingWriter:
     # ---------- inline 逐字写入 ----------
 
     def _type_text(self, text, animate):
-        """批量打字：每次 COM 调用输入约 _TYPE_BATCH 个字符，停顿按比例。"""
+        """批量打字：按当前档位的批量大小与延时系数写入。"""
         if not text:
             return
-        for i in range(0, len(text), _TYPE_BATCH):
-            batch = text[i:i + _TYPE_BATCH]
-            self.sel.TypeText(batch)
+        batch, factor = self._gear()
+        self._emitted += len(text)
+        for i in range(0, len(text), batch):
+            b = text[i:i + batch]
+            _com_retry(lambda: self.sel.TypeText(b))
             if animate:
-                time.sleep(self.char_delay * len(batch))
+                time.sleep(self.char_delay * factor * len(b))
 
+    def _insert_image(self, src, alt):
+        """插入内联图片；失败时降级为 alt 文本。返回新增内容的纯文本表示。"""
+        if src:
+            try:
+                self.doc.InlineShapes.AddPicture(src, False, True, self.sel.Range)
+                return "\x01"
+            except Exception:
+                pass
+        if alt:
+            self._type_text(alt, False)
+        return alt
     def _emit_inline(self, children, animate):
         """逐字写入一个 inline 片段，处理粗体/斜体/行内代码/链接；返回纯文本。"""
         parts = []
@@ -779,6 +943,13 @@ class StreamingWriter:
                     self.sel.Font.Name = prev  # 打完代码恢复原字体（真实 Word 中 prev 必为字体名）
                 except Exception:
                     pass
+            elif ct == "image":
+                src = None
+                try:
+                    src = _decode_src(ch.attrGet("src"))
+                except Exception:
+                    src = None
+                parts.append(self._insert_image(src, ch.content or ""))
             elif ct in ("softbreak", "hardbreak"):
                 pass  # 段内换行暂按跨行连续处理
             elif ct == "strong_open":

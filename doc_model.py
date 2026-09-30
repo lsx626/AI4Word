@@ -12,10 +12,16 @@
 
 段落对齐采用贪心前缀策略：段落数不一致时（用户手动改过文档），尽量对齐前面
 的块并记录 alignment_warning，而不是整体放弃。
-undo() 封装 Word 编辑栈；文档看门狗 DocWatch 检测流式停顿期间的用户改动。
+undo() 封装 Word 编辑栈；model_undo/model_redo 是块级快照撤销（整篇重写）。
+事务 begin_txn/commit/rollback_txn 保证多步编辑的原子性；修订模式把 AI 的编辑
+变成 Word 修订（accept/reject 由用户拍板）；块模型可序列化进文档变量（doc.Variables），
+重开同一文档即恢复；段落数漂移时 realign_blocks 按文本相似度重对齐；
+insert_toc/set_header/set_footer/insert_page_break 补齐长文档布局能力。
 
 所有编辑操作完成后会把选区移动到受影响区域并闪烁高亮，让排版过程可见。
 """
+import difflib
+import json
 import time
 
 import pywintypes
@@ -26,6 +32,13 @@ from doc_watch import DocWatch
 WD_NO_HIGHLIGHT = 0
 WD_YELLOW = 7
 RPC_CALL_REJECTED = -2147418111  # Word 忙（重分页/界面刷新）时拒绝调用
+BLOCKS_PROP = "AI4WordBlocks"
+_PROP_CHUNK = 8000                # doc.Variables 单值实测 ≥50000 字符可用，按 8000 字符分片留余量  # 块模型持久化存入的自定义文档属性名
+WD_HEADER_FOOTER_PRIMARY = 1   # wdHeaderFooterPrimary
+WD_PAGE_BREAK = 7              # wdPageBreak
+
+
+_real_sleep = time.sleep  # 测试会 monkeypatch time.sleep 关闭动画延迟；COM 重试的退避必须真实等待
 
 
 def _com_retry(fn, attempts=6):
@@ -36,7 +49,7 @@ def _com_retry(fn, attempts=6):
         except pywintypes.com_error as e:
             if e.hresult != RPC_CALL_REJECTED or k == attempts - 1:
                 raise
-            time.sleep(0.15 * (k + 1))
+            _real_sleep(0.15 * (k + 1))
 
 
 def md_to_text(md):
@@ -88,6 +101,13 @@ class DocModel:
         self.blocks = []
         self.alignment_warning = None  # 段落漂移时的对齐警告（给 AI 与用户看）
         self.watch = DocWatch(app, doc)
+        # 块级快照撤销 / 事务
+        self._undo_stack = []
+        self._redo_stack = []
+        self._suppress_push = False  # 事务或 apply_edit 期间，原语不再单独入快照栈
+        self._txn_active = False
+        self._txn_snap = None
+        self._track_prev = False
 
     def register(self, kind, level, md, text, rng, n_paras=1):
         b = Block(kind, level, md, text, rng, n_paras)
@@ -133,6 +153,8 @@ class DocModel:
 
     def refresh_texts(self):
         for b in self.blocks:
+            if b.range is None:
+                continue  # 重对齐中失活的块
             try:
                 b.text = b.range.Text
             except Exception:
@@ -160,6 +182,7 @@ class DocModel:
 
     def replace_block(self, i, md):
         """用新的 markdown 改写第 i 块（原段落保留，清空内容后重写）。"""
+        self._push_undo()
         b = self.blocks[i]
         if b.kind == "table":
             # 表格块：删掉表格本身，保留其后的容器段落作为新内容的写入点
@@ -183,6 +206,7 @@ class DocModel:
 
     def insert_after(self, i, md):
         """在第 i 块之后插入新内容。"""
+        self._push_undo()
         b = self.blocks[i]
         pos = None
         if b.kind == "table":
@@ -218,12 +242,14 @@ class DocModel:
 
     def insert_at_end(self, md):
         """在文档末尾追加新内容。"""
+        self._push_undo()
         if not self.blocks:
             return self.writer.write_block(md, animate=True)
         return self.insert_after(len(self.blocks) - 1, md)
 
     def delete_block(self, i):
         """删除第 i 块（连同它占用的全部段落与段落标记）。"""
+        self._push_undo()
         b = self.blocks[i]
         if b.kind == "table":
             self._delete_table_block(b)
@@ -259,6 +285,7 @@ class DocModel:
 
     def replace_text(self, old, new):
         """全文查找替换。"""
+        self._push_undo()
         f = self.doc.Content.Find
         f.ClearFormatting()
         f.Replacement.ClearFormatting()
@@ -330,7 +357,16 @@ class DocModel:
         raise ValueError(f"未知操作: {op!r}（应为 replace/insert_after/insert_at_end/delete）")
 
     def apply_edit(self, spec):
-        """执行声明式编辑 spec，返回执行摘要。"""
+        """执行声明式编辑 spec，返回执行摘要（整次编辑作为一条快照撤销记录）。"""
+        prev = self._suppress_push
+        self._push_undo()
+        self._suppress_push = True
+        try:
+            return self._apply_edit(spec)
+        finally:
+            self._suppress_push = prev
+
+    def _apply_edit(self, spec):
         if not isinstance(spec, dict):
             raise ValueError("spec 必须是字典")
         op = spec.get("op")
@@ -364,6 +400,354 @@ class DocModel:
         self._flash(b.range)
         return True
 
+
+    # ---------- 修订模式（人机协同：AI 的修改以 Word 修订呈现，可接受/拒绝） ----------
+
+    def review_on(self):
+        """开启修订模式：此后本模型的编辑都成为 Word 修订，用户可逐条接受/拒绝。"""
+        try:
+            self._track_prev = bool(self.doc.TrackRevisions)
+        except Exception:
+            self._track_prev = False
+        try:
+            self.doc.TrackRevisions = True
+        except Exception:
+            pass
+        return True
+
+    def review_off(self):
+        """关闭修订模式，恢复开启前的状态。"""
+        try:
+            self.doc.TrackRevisions = self._track_prev
+        except Exception:
+            pass
+        return True
+
+    def has_revisions(self):
+        """文档中是否还有未决修订。"""
+        try:
+            return int(self.doc.Revisions.Count) > 0
+        except Exception:
+            return False
+
+    def accept_block_revisions(self, i):
+        """接受第 i 块范围内的全部修订，随后重建块模型。"""
+        return self._resolve_block_revisions(i, accept=True)
+
+    def reject_block_revisions(self, i):
+        """拒绝第 i 块范围内的全部修订（内容回滚），随后重建块模型。"""
+        return self._resolve_block_revisions(i, accept=False)
+
+    def _resolve_block_revisions(self, i, accept):
+        b = self.blocks[i]
+        n = 0
+        try:
+            revs = b.range.Revisions
+            count = int(revs.Count)
+            # 倒序遍历：每处理一条，集合就变一次
+            for k in range(count, 0, -1):
+                try:
+                    r = revs(k)
+                except Exception:
+                    continue
+                if accept:
+                    r.Accept()
+                else:
+                    r.Reject()
+                n += 1
+        except Exception:
+            pass
+        self.rebuild_ranges()
+        return n
+
+    # ---------- 块模型持久化（随文档保存，重开同一文档可恢复） ----------
+
+    def save_blocks(self):
+        """把块模型序列化进文档变量（doc.Variables）；返回块数。
+
+        文档变量随文档一起保存，下次打开同一文档时 load_blocks()
+        按 n_paras 重新对齐段落、重建 Range，块索引语义跨会话保留。
+        doc.Variables 单值实测可容 ≥50000 字符，为稳妥起见仍分片：
+        BLOCKS_PROP 存分片总数（字符串），BLOCKS_PROP_0..n-1 存各分片。
+        """
+        data = [{"kind": b.kind, "level": b.level, "md": b.md,
+                 "text": b.text, "n_paras": b.n_paras} for b in self.blocks]
+        payload = json.dumps(data, ensure_ascii=False)
+        n = max(1, (len(payload) + _PROP_CHUNK - 1) // _PROP_CHUNK)
+        self._set_doc_variable(BLOCKS_PROP, str(n))
+        for k in range(n):
+            self._set_doc_variable(f"{BLOCKS_PROP}_{k}",
+                                      payload[k * _PROP_CHUNK:(k + 1) * _PROP_CHUNK])
+        # 本次块数变少时，清理残留的编号更大的旧分片
+        k = n
+        while self._clear_doc_variable(f"{BLOCKS_PROP}_{k}"):
+            k += 1
+        return len(data)
+
+    def _set_doc_variable(self, name, value):
+        """写入一个文档变量；已存在则覆盖。"""
+        try:
+            self.doc.Variables(name).Value = value
+            return
+        except Exception:
+            pass  # 尚无此变量，走 Add
+        try:
+            # 真实签名 Variables.Add(Name, Value)；同名已存在会抛错
+            self.doc.Variables.Add(name, value)
+        except Exception:
+            # 变量已存在但 .Value 赋值失败时，删除后重建
+            try:
+                self.doc.Variables(name).Delete()
+            except Exception:
+                pass
+            self.doc.Variables.Add(name, value)
+
+    def _clear_doc_variable(self, name):
+        """删除某个文档变量；不存在时返回 False。"""
+        try:
+            self.doc.Variables(name).Delete()
+            return True
+        except Exception:
+            return False
+
+    def load_blocks(self):
+        """从文档变量恢复块模型；返回恢复的块数（0 表示没有存档）。"""
+        try:
+            n = int(self.doc.Variables(BLOCKS_PROP).Value)
+        except Exception:
+            return 0
+        if n <= 0:
+            return 0
+        parts = []
+        for k in range(n):
+            try:
+                parts.append(self.doc.Variables(f"{BLOCKS_PROP}_{k}").Value)
+            except Exception:
+                return 0
+        payload = "".join(parts)
+        try:
+            data = json.loads(payload)
+        except Exception:
+            return 0
+        if not isinstance(data, list):
+            return 0
+        blocks = []
+        for d in data:
+            if not isinstance(d, dict):
+                continue
+            blocks.append(Block(d.get("kind", "paragraph"), d.get("level", 0),
+                                d.get("md", ""), d.get("text", ""),
+                                None, d.get("n_paras", 1)))
+        if not blocks:
+            return 0
+        self.blocks = blocks
+        self.rebuild_ranges()
+        # 存档与现状不一致（别的会话里改过文档）时按相似度重对齐
+        if self.alignment_warning:
+            self.realign_blocks()
+        return len(self.blocks)
+
+    # ---------- 漂移后的模糊重对齐（用户手改文档，段落数已变） ----------
+
+    def realign_blocks(self):
+        """按文本相似度把块重新钉到当前段落上，返回成功对齐的块数。
+
+        rebuild_ranges 的贪心前缀只接受"块在前、段落一一对应"的理想情况；
+        用户手动增删段落后，用 difflib 为每个块找回位置，找不到的块 Range
+        置空（block_map 会显示警告）。
+        """
+        try:
+            paras = self.doc.Paragraphs
+            total = paras.Count
+        except Exception:
+            return 0
+        if not self.blocks or total <= 0:
+            return 0
+        para_texts = []
+        for k in range(1, total + 1):
+            try:
+                para_texts.append(paras(k).Range.Text.replace("\r", " ").replace("\n", " ").strip())
+            except Exception:
+                para_texts.append("")
+        matched = 0
+        pk = 0
+        for b in self.blocks:
+            bt = (b.text or "").replace("\r", " ").replace("\n", " ").strip()
+            best = None
+            for start in range(pk, min(pk + 10, total)):
+                for cnt in (1, 2, 3, 4):
+                    if start + cnt > total:
+                        break
+                    cand = " ".join(t for t in para_texts[start:start + cnt] if t).strip()
+                    ratio = difflib.SequenceMatcher(None, bt, cand).ratio()
+                    if best is None or ratio > best[0]:
+                        best = (ratio, start, cnt)
+            if best is not None and best[0] >= 0.55:
+                _, start, cnt = best
+                s = paras(start + 1).Range.Start
+                e = paras(start + cnt).Range.End - 1
+                if e < s:
+                    e = s
+                b.range = _com_retry(lambda: self.doc.Range(s, e))
+                b.n_paras = cnt
+                pk = start + cnt
+                matched += 1
+            else:
+                b.range = None
+        self.alignment_warning = None if matched == len(self.blocks) else \
+            f"重对齐：{matched}/{len(self.blocks)} 块找到对应段落，其余块已失去定位"
+        self.refresh_texts()
+        return matched
+
+    # ---------- 块级快照 undo/redo（整篇重写级，区别于 Word 的操作栈） ----------
+
+    def snapshot(self):
+        """当前块模型的快照（各块的 md 与结构），可传给 restore_snapshot。"""
+        return [{"kind": b.kind, "level": b.level, "md": b.md,
+                 "text": b.text, "n_paras": b.n_paras} for b in self.blocks]
+
+    def restore_snapshot(self, snap):
+        """按快照整篇重写文档（块 md 顺序重写），返回重建的块数。
+
+        model_undo / 事务回滚用它。注意：快照恢复会丢弃用户在 AI 块之外
+        手动做的格式调整——这是"结构一致"与"保留一切手动痕迹"之间的取舍。
+        """
+        if self.writer is None:
+            raise RuntimeError("没有可用的写入器，无法恢复快照")
+        snap = list(snap or [])
+        try:
+            self.doc.Content.Delete()
+        except Exception:
+            pass
+        try:
+            self.doc.Range(0, 0).Select()
+        except Exception:
+            pass
+        self.blocks = []
+        w = self.writer
+        w.pending = ""
+        w._draft = None
+        w._first_block = True
+        for idx, item in enumerate(snap):
+            if idx > 0:
+                try:
+                    # 块之间的段落分隔：流式路径里由 _write_top_level 的 started 逻辑补，
+                    # 逐块重写时调用方（此处）负责补上，否则相邻块会并进同一段落
+                    w.sel.TypeParagraph()
+                except Exception:
+                    pass
+            try:
+                w.write_block(item.get("md", ""), animate=False)
+            except Exception:
+                pass
+        self.rebuild_ranges()
+        return len(self.blocks)
+
+    def model_undo(self):
+        """快照撤销：回到上一个编辑前的块模型状态。"""
+        if not self._undo_stack:
+            return False
+        cur = self.snapshot()
+        nxt = self._undo_stack.pop()
+        self._redo_stack.append(cur)
+        self.restore_snapshot(nxt)
+        return True
+
+    def model_redo(self):
+        """快照重做（撤销之后才能用）。"""
+        if not self._redo_stack:
+            return False
+        cur = self.snapshot()
+        nxt = self._redo_stack.pop()
+        self._undo_stack.append(cur)
+        self.restore_snapshot(nxt)
+        return True
+
+    def _push_undo(self):
+        """编辑前压入快照；事务进行中或被上层抑制时跳过（避免双重入栈）。"""
+        if self._suppress_push:
+            return
+        self._undo_stack.append(self.snapshot())
+        if len(self._undo_stack) > 50:
+            del self._undo_stack[0]
+        self._redo_stack.clear()
+
+    # ---------- 事务：多步编辑的原子性 ----------
+
+    def begin_txn(self):
+        """开启事务：到 commit/rollback 之间的编辑是一个原子单元。"""
+        if self._txn_active:
+            raise RuntimeError("已有进行中的事务")
+        self._txn_snap = self.snapshot()
+        self._push_undo()
+        self._txn_active = True
+        self._suppress_push = True  # 事务内的原语不再单独入快照栈
+        return True
+
+    def commit_txn(self):
+        """提交事务：编辑保留（整条事务已作为一条快照撤销记录入栈）。"""
+        if not self._txn_active:
+            raise RuntimeError("没有进行中的事务")
+        self._txn_active = False
+        self._suppress_push = False
+        self._txn_snap = None
+        return True
+
+    def rollback_txn(self):
+        """回滚事务：文档与块模型恢复到事务开始前。"""
+        if not self._txn_active:
+            raise RuntimeError("没有进行中的事务")
+        snap = self._txn_snap
+        self._txn_active = False
+        self._suppress_push = False
+        self._txn_snap = None
+        self.restore_snapshot(snap)
+        return True
+
+    # ---------- 长文档布局：目录 / 页眉页脚 / 分页 ----------
+
+    def insert_toc(self):
+        """在文档末尾插入目录（基于标题级别 1-3，Word 域自动生成）。"""
+        try:
+            end = self.doc.Content.End
+        except Exception:
+            end = 0
+        pos = max(0, end - 1)  # 文档以段落标记结尾，末尾前一位置更稳
+        try:
+            self.doc.Range(pos, pos).Select()
+            self.sel.TypeParagraph()
+            pos = self.sel.Range.Start
+        except Exception:
+            pass
+        toc = self.doc.TablesOfContents.Add(self.doc.Range(pos, pos), True, 1, 3)
+        try:
+            toc.Update()
+        except Exception:
+            pass
+        try:
+            self.sel.Range.Select()
+        except Exception:
+            pass
+        return True
+
+    def set_header(self, text):
+        """设置第一节页眉文本。"""
+        h = self.doc.Sections(1).Headers(WD_HEADER_FOOTER_PRIMARY)
+        h.Range.Text = text
+        return True
+
+    def set_footer(self, text):
+        """设置第一节页脚文本。"""
+        f = self.doc.Sections(1).Footers(WD_HEADER_FOOTER_PRIMARY)
+        f.Range.Text = text
+        return True
+
+    def insert_page_break(self):
+        """在当前光标处插入分页符。"""
+        self.sel.InsertBreak(WD_PAGE_BREAK)
+        self.rebuild_ranges()
+        return True
+
     # ---------- 可视化 ----------
 
     def _flash(self, rng, seconds=0.4):
@@ -375,5 +759,12 @@ class DocModel:
             rng.HighlightColorIndex = WD_YELLOW
             time.sleep(seconds)
             rng.HighlightColorIndex = WD_NO_HIGHLIGHT
+            # 闪罩后把光标恢复为块尾的折叠点：留着覆盖整个块的选区，
+            # 后续流式写入会 用 TypeParagraph/TypeText 替换掉块内容
+            # （含内联图片）。
+            try:
+                self.doc.Range(rng.End, rng.End).Select()
+            except Exception:
+                pass
         except Exception:
             pass

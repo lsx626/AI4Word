@@ -15,6 +15,7 @@ import win32com.client
 from doc_model import DocModel
 from format_runner import run_code
 from streaming_writer import StreamingWriter
+from styles import apply_preset
 
 time.sleep = lambda s: None  # 冒烟测试关闭动画延迟
 
@@ -259,6 +260,111 @@ def main():
     assert "声明式替换的段落" in doc.Content.Text, "undo 回退过度"
     aligned()
     print("ok: undo（单条编辑记录精确回退、块模型重建对齐）")
+
+    # ---- V7.3：修订模式 / 内联图片 / 样式预设 / 快照撤销 / 事务 / 长文档布局 ----
+
+    # 生成 1x1 真实 PNG（zlib + struct，无外部素材依赖）
+    import struct as _struct
+    import zlib as _zlib
+    png_path = os.path.join(os.environ.get("TEMP", "."), "ai4word_test.png")
+
+    def _png_chunk(typ, data):
+        c = _struct.pack(">I", len(data)) + typ + data
+        return c + _struct.pack(">I", _zlib.crc32(typ + data) & 0xffffffff)
+
+    with open(png_path, "wb") as f:
+        f.write(b"\x89PNG\r\n\x1a\n"
+                + _png_chunk(b"IHDR", _struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+                + _png_chunk(b"IDAT", _zlib.compress(b"\x00\xff\x00\x00"))
+                + _png_chunk(b"IEND", b""))
+
+    # 修订模式：AI 的插入成为 Word 修订，块级接受后落定
+    model.review_on()
+    model.insert_at_end("修订插入段")
+    assert model.has_revisions(), "修订模式下插入未产生修订"
+    assert "修订插入段" in doc.Content.Text
+    target = next(i for i, b in enumerate(model.blocks)
+                  if "修订插入段" in (b.text or ""))
+    n = model.accept_block_revisions(target)
+    assert n >= 1, "块级接受未处理修订"
+    assert "修订插入段" in doc.Content.Text
+    # 段落标记等块外残留修订在文档级清干净
+    for _ in range(50):
+        if doc.Revisions.Count == 0:
+            break
+        doc.Revisions(1).Accept()
+    assert not model.has_revisions(), f"仍有未决修订: {doc.Revisions.Count}"
+    model.review_off()
+    aligned()
+    print("ok: 修订模式（插入成修订、块级接受、修订清零）")
+
+    # 内联图片：结构块路径，alt 被替换为真实 InlineShape
+    shapes_before = doc.InlineShapes.Count
+    model.insert_at_end(f"看![测试图]({png_path})尾")
+    assert doc.InlineShapes.Count >= shapes_before + 1, \
+        f"图片数 {doc.InlineShapes.Count} < {shapes_before + 1}"
+    assert "看" in doc.Content.Text and "尾" in doc.Content.Text
+    aligned()
+    print("ok: 结构块内联图片（真实 AddPicture）")
+
+    # 内联图片：草稿流式路径（分片到达、提交时整体替换）
+    shapes_before = doc.InlineShapes.Count
+    feed_in_pieces(writer, f"流图![草图]({png_path})", size=4)
+    writer.flush()
+    assert doc.InlineShapes.Count >= shapes_before + 1, \
+        f"流式图片数 {doc.InlineShapes.Count} < {shapes_before + 1}"
+    aligned()
+    print("ok: 草稿期图片（跨分片到达、提交时替换）")
+
+    # 样式预设：整套排版一次应用
+    apply_preset(doc, "论文")
+    assert doc.Styles(-1).Font.Name == "宋体", doc.Styles(-1).Font.Name
+    assert doc.Styles(-1).Font.Size == 12, doc.Styles(-1).Font.Size
+    assert doc.Styles(-2).Font.Name == "黑体", doc.Styles(-2).Font.Name
+    print("ok: 样式预设（论文：宋体小四正文、黑体标题）")
+
+    # 块级快照撤销 / 重做 + 事务
+    model.insert_at_end("快照测试段")
+    assert "快照测试段" in doc.Content.Text
+    assert model.model_undo(), "快照撤销失败"
+    assert "快照测试段" not in doc.Content.Text, "快照撤销未回退"
+    assert model.model_redo(), "快照重做失败"
+    assert "快照测试段" in doc.Content.Text, "快照重做未恢复"
+    model.begin_txn()
+    model.insert_at_end("事务段甲")
+    model.rollback_txn()
+    assert "事务段甲" not in doc.Content.Text, "事务回滚失败"
+    model.begin_txn()
+    model.insert_at_end("事务段乙")
+    model.commit_txn()
+    assert "事务段乙" in doc.Content.Text, "事务提交失败"
+    print("ok: 快照撤销/重做 + 事务回滚/提交")
+
+    # 打字档位
+    writer.set_speed("fast")
+    writer.set_speed("auto")
+    print("ok: 打字档位切换")
+
+    # 长文档布局：目录 / 页眉页脚 / 分页符（会新增段落，放在 aligned 检查之后）
+    n_blocks = len(model.blocks)
+    assert model.insert_toc(), "目录插入失败"
+    assert doc.TablesOfContents.Count >= 1, "无目录"
+    model.set_header("冒烟页眉")
+    assert doc.Sections(1).Headers(1).Range.Text.strip() == "冒烟页眉", \
+        doc.Sections(1).Headers(1).Range.Text
+    model.set_footer("冒烟页脚")
+    assert doc.Sections(1).Footers(1).Range.Text.strip() == "冒烟页脚"
+    model.insert_page_break()
+    assert "\x0c" in doc.Content.Text, "未见分页符"
+    print("ok: 目录 / 页眉 / 页脚 / 分页符")
+
+    # 块模型持久化：写入文档变量（doc.Variables）再读回
+    n_saved = model.save_blocks()
+    assert n_saved == len(model.blocks), (n_saved, len(model.blocks))
+    got = model.load_blocks()
+    assert got == n_saved, (got, n_saved)
+    assert len(model.blocks) == n_saved
+    print("ok: 块模型持久化（真实文档变量 doc.Variables 往返）")
 
     print("\n真实 Word 冒烟测试全部通过。")
     doc.Close(SaveChanges=0)

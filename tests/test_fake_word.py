@@ -27,6 +27,7 @@ _time.sleep = lambda s: None  # 测试中关闭打字机延迟
 
 from doc_model import DocModel
 from streaming_writer import StreamingWriter
+from styles import apply_preset, preset_names
 
 
 class _Seg:
@@ -66,9 +67,87 @@ class FakeSelectionFont:
         self.name = v
 
 
+class FakeStyleFont:
+    """样式字体：Name/Size 可读写（apply_preset 经此修改样式定义）。"""
+
+    def __init__(self):
+        self.name = None
+        self.size = None
+
+    @property
+    def Name(self):
+        return self.name
+
+    @Name.setter
+    def Name(self, v):
+        self.name = v
+
+    @property
+    def Size(self):
+        return self.size
+
+    @Size.setter
+    def Size(self, v):
+        self.size = v
+
+
+class FakeStyleParagraphFormat:
+    """样式段落格式：对齐/行距规则/行距/首行缩进可读写。"""
+
+    def __init__(self):
+        self.alignment = None
+        self.line_spacing_rule = None
+        self.line_spacing = None
+        self.first_line_indent = None
+
+    @property
+    def Alignment(self):
+        return self.alignment
+
+    @Alignment.setter
+    def Alignment(self, v):
+        self.alignment = v
+
+    @property
+    def LineSpacingRule(self):
+        return self.line_spacing_rule
+
+    @LineSpacingRule.setter
+    def LineSpacingRule(self, v):
+        self.line_spacing_rule = v
+
+    @property
+    def LineSpacing(self):
+        return self.line_spacing
+
+    @LineSpacing.setter
+    def LineSpacing(self, v):
+        self.line_spacing = v
+
+    @property
+    def FirstLineIndent(self):
+        return self.first_line_indent
+
+    @FirstLineIndent.setter
+    def FirstLineIndent(self, v):
+        self.first_line_indent = v
+
+
 class FakeStyle:
+    """一个样式定义：Font / ParagraphFormat 均可读写。"""
+
     def __init__(self, sid):
         self.sid = sid
+        self._font = FakeStyleFont()
+        self._pf = FakeStyleParagraphFormat()
+
+    @property
+    def Font(self):
+        return self._font
+
+    @property
+    def ParagraphFormat(self):
+        return self._pf
 
 
 class FakeParagraph:
@@ -281,6 +360,10 @@ class FakeRange:
     def ParagraphFormat(self):
         return FakeParagraphFormat(self._doc, self)
 
+    @property
+    def Revisions(self):
+        return FakeRevisions(self._doc, self)
+
     def Delete(self):
         self._doc._delete(self.start, self.end)
 
@@ -297,6 +380,212 @@ class FakeRange:
         return f"Range[{self.start},{self.end})={self.Text!r}"
 
 
+class FakeRevision:
+    """一条修订：insert/delete；Accept 落定、Reject 反向操作后移除。"""
+
+    def __init__(self, doc, kind, start, end, text):
+        self._doc = doc
+        self.kind = kind      # insert / delete
+        self.start = start
+        self.end = end
+        self.text = text
+
+    def Accept(self):
+        self._remove()
+
+    def Reject(self):
+        d = self._doc
+        d._suppress_rev = True
+        try:
+            if self.kind == "insert":
+                d._delete(self.start, self.end)
+            else:
+                d._insert(self.start, self.text)
+        finally:
+            d._suppress_rev = False
+        self._remove()
+
+    def _remove(self):
+        try:
+            self._doc._revisions.remove(self)
+        except ValueError:
+            pass
+
+
+class FakeRevisions:
+    """修订集合：可按区间过滤；Count 与按序号取修订（倒序处理时集合会变）。"""
+
+    def __init__(self, doc, rng=None):
+        self._doc = doc
+        self._rng = rng
+
+    def _overlapping(self):
+        revs = list(self._doc._revisions)
+        if self._rng is None:
+            return revs
+        a, b = self._rng.Start, self._rng.End
+        return [r for r in revs if r.start < b and r.end > a]
+
+    @property
+    def Count(self):
+        return len(self._overlapping())
+
+    def __call__(self, k):
+        revs = self._overlapping()
+        if k < 1 or k > len(revs):
+            raise IndexError(f"Revisions({k}) 越界（共 {len(revs)} 条修订）")
+        return revs[k - 1]
+
+
+class FakeInlineShape:
+    def __init__(self, src):
+        self.src = src
+
+
+class FakeInlineShapes:
+    """内联图片：仅 src 以 ok: 开头时成功（用 \x01 占位，模拟真实图片）。"""
+
+    def __init__(self, doc):
+        self._doc = doc
+
+    def AddPicture(self, src, link_to_file, save_with_document, rng):
+        if not (src and src.startswith("ok:")):
+            raise Exception(f"fake 无法加载图片: {src}")
+        rng.Delete()
+        d = self._doc
+        d._suppress_rev = True
+        try:
+            d._insert(rng.Start, "\x01")
+        finally:
+            d._suppress_rev = False
+        d.app.Selection.pos = rng.Start + 1
+        shape = FakeInlineShape(src)
+        d._shapes.append(shape)
+        return shape
+
+    @property
+    def Count(self):
+        return len(self._doc._shapes)
+
+
+class FakeTOC:
+    def __init__(self):
+        self.updated = False
+
+    def Update(self):
+        self.updated = True
+
+
+class FakeTablesOfContents:
+    def __init__(self, doc):
+        self._doc = doc
+
+    def Add(self, rng, use_heading_styles, lower_level, upper_level):
+        toc = FakeTOC()
+        self._doc._tocs.append(toc)
+        return toc
+
+    @property
+    def Count(self):
+        return len(self._doc._tocs)
+
+
+class _HFRange:
+    """页眉/页脚range：Text 可读写。"""
+
+    def __init__(self, holder, attr):
+        self._holder = holder
+        self._attr = attr
+
+    @property
+    def Text(self):
+        return getattr(self._holder, self._attr)
+
+    @Text.setter
+    def Text(self, v):
+        setattr(self._holder, self._attr, v)
+
+
+class _FakeHeaderFooter:
+    def __init__(self, section, attr):
+        self._section = section
+        self._attr = attr
+
+    @property
+    def Range(self):
+        return _HFRange(self._section, self._attr)
+
+
+class FakeSection:
+    def __init__(self):
+        self.header_text = ""
+        self.footer_text = ""
+
+    def Headers(self, n):
+        return _FakeHeaderFooter(self, "header_text")
+
+    def Footers(self, n):
+        return _FakeHeaderFooter(self, "footer_text")
+
+
+class FakeSections:
+    def __init__(self, doc):
+        self._doc = doc
+
+    def __call__(self, n):
+        if n < 1 or n > len(self._doc._sections):
+            raise IndexError(f"Sections({n}) 越界（共 {len(self._doc._sections)} 节）")
+        return self._doc._sections[n - 1]
+
+    @property
+    def Count(self):
+        return len(self._doc._sections)
+
+
+class _FakeVariable:
+    """一个文档变量：Value 可读写、Delete 删自己。"""
+
+    def __init__(self, variables, name, value):
+        self._variables = variables
+        self.name = name
+        self.value = value
+
+    @property
+    def Value(self):
+        return self.value
+
+    @Value.setter
+    def Value(self, v):
+        self.value = v
+
+    def Delete(self):
+        del self._variables[self.name]
+
+
+class FakeVariables:
+    """文档变量：不存在时按名取抛错；Add / Value / Delete，对齐真实 doc.Variables。"""
+
+    def __init__(self, doc):
+        self._doc = doc
+
+    def __call__(self, name):
+        variables = self._doc._vars
+        if name not in variables:
+            raise KeyError(f"变量不存在: {name}")
+        return variables[name]
+
+    def Add(self, name, value):  # 对齐真实 Word 签名 Variables.Add(Name, Value)
+        if name in self._doc._vars:
+            raise KeyError(f"Variable 名称已经存在: {name}")
+        var = _FakeVariable(self._doc._vars, name, value)
+        self._doc._vars[name] = var
+        return var
+
+    @property
+    def Count(self):
+        return len(self._doc._vars)
+
+
 class FakeDoc:
     def __init__(self, app):
         self.app = app
@@ -307,6 +596,15 @@ class FakeDoc:
         self._segs = []     # 字符属性段
         self._indents = []  # LeftIndent 赋值记录
         self._undo_count = 0
+        # V7.3：修订 / 图片 / 目录 / 页眉页脚 / 文档变量 / 样式缓存
+        self._vars = {}
+        self._shapes = []
+        self._tocs = []
+        self._sections = [FakeSection()]
+        self._style_cache = {}
+        self._track = False
+        self._suppress_rev = False
+        self._revisions = []
 
     def Range(self, a, b):
         return FakeRange(self, a, b)
@@ -319,14 +617,68 @@ class FakeDoc:
     def Paragraphs(self):
         return FakeParagraphs(self, self.Range(0, len(self.content)))
 
+    @property
+    def End(self):
+        return len(self.content)
+
+    @property
+    def TrackRevisions(self):
+        return self._track
+
+    @TrackRevisions.setter
+    def TrackRevisions(self, v):
+        self._track = bool(v)
+
+    @property
+    def Revisions(self):
+        return FakeRevisions(self)
+
+    @property
+    def Variables(self):
+        return FakeVariables(self)
+
+    @property
+    def Sections(self):
+        return FakeSections(self)
+
+    @property
+    def TablesOfContents(self):
+        return FakeTablesOfContents(self)
+
+    @property
+    def InlineShapes(self):
+        return FakeInlineShapes(self)
+
     def Styles(self, sid):
-        return FakeStyle(sid)
+        st = self._style_cache.get(sid)
+        if st is None:
+            st = FakeStyle(sid)
+            self._style_cache[sid] = st
+        return st
+
+    def Delete(self):
+        """Content.Delete()：清空全文（restore_snapshot 会调用）。"""
+        self._suppress_rev = True
+        try:
+            self.content = "\r"
+            self._ranges = []
+            self._styles = []
+            self._segs = []
+            self._indents = []
+            self._shapes = []
+            self._tocs = []
+        finally:
+            self._suppress_rev = False
+        self.app.sel.pos = 0
 
     def Undo(self, times=1):
         self._undo_count += times
         return True
 
     def _insert(self, pos, text):
+        if self._track and not self._suppress_rev and text:
+            self._revisions.append(
+                FakeRevision(self, "insert", pos, pos + len(text), text))
         self.content = self.content[:pos] + text + self.content[pos:]
         for r in self._ranges:
             if pos <= r.start:
@@ -342,6 +694,9 @@ class FakeDoc:
                 s.end += len(text)
 
     def _delete(self, a, b):
+        if self._track and not self._suppress_rev and a < b:
+            self._revisions.append(
+                FakeRevision(self, "delete", a, b, self.content[a:b]))
         length = b - a
         self.content = self.content[:a] + self.content[b:]
         for r in self._ranges:
@@ -396,6 +751,10 @@ class FakeSelection:
 
     def TypeParagraph(self):
         self.TypeText("\r")
+
+    def InsertBreak(self, w=7):
+        # wdPageBreak = 7：与真实 Word 一致落下分页符字符
+        self.TypeText("\x0c")
 
     @property
     def Range(self):
@@ -755,6 +1114,192 @@ def test_watch_detects_user_edit():
     print("ok: 文档看门狗（自身写入不误报、用户改动入队）")
 
 
+def test_image_fallback_alt():
+    app, writer, model = make()
+    # fake 只能加载 ok: 开头的图片：加载失败时 alt 文本必须留在文档里
+    writer.write_block("看![图](bad:/x.png)尾", animate=False)
+    assert app.doc.content == "看图尾\r", f"内容不符: {app.doc.content!r}"
+    assert app.doc.InlineShapes.Count == 0
+    assert_aligned(model, app)
+    print("ok: 图片降级（加载失败时 alt 保留、不插入形状）")
+
+
+def test_heading_inline_image():
+    app, writer, model = make()
+    writer.write_block("# 标题 ![图](ok:/x.png)", animate=False)
+    assert app.doc.content == "标题 \x01\r", f"内容不符: {app.doc.content!r}"
+    assert app.doc.InlineShapes.Count == 1
+    assert model.blocks[0].kind == "heading1"
+    assert model.blocks[0].text == "标题 \x01"
+    assert_aligned(model, app)
+    print("ok: 结构块内联图片（标题 + 图片混合写入）")
+
+
+def test_draft_image_commit():
+    app, writer, model = make()
+    # ![ 与图片语法分片到达：草稿态攒住，补全后整体替换为真实图片
+    writer.feed("看![图](ok:/x")
+    writer.feed("png)")
+    writer.flush()
+    assert app.doc.content == "看\x01\r", f"内容不符: {app.doc.content!r}"
+    assert app.doc.InlineShapes.Count == 1
+    assert model.get_block_text(0) == "看\x01"
+    assert_aligned(model, app)
+    print("ok: 草稿期图片提交（跨分片攒住、alt 替换为图片）")
+
+
+def test_review_reject():
+    app, writer, model = make()
+    assert not model.has_revisions()
+    model.review_on()
+    assert app.doc.TrackRevisions
+    # 修订模式下整段写入：一次 TypeText = 一条 insertion 修订
+    writer.write_block("追加段", animate=False)
+    assert "追加段" in app.doc.content
+    assert model.has_revisions()
+    n = model.reject_block_revisions(0)
+    assert n == 1, f"未处理修订: {n}"
+    assert app.doc.content == "\r", f"拒绝修订后应回滚为空文档: {app.doc.content!r}"
+    assert not model.has_revisions()
+    model.review_off()
+    assert not app.doc.TrackRevisions
+    print("ok: 修订模式（拒绝 insertion 回滚原文、修订清零）")
+
+
+def test_review_accept():
+    app, writer, model = make()
+    model.review_on()
+    writer.write_block("追加段", animate=False)
+    n = model.accept_block_revisions(0)
+    assert n == 1, f"未处理修订: {n}"
+    assert app.doc.content == "追加段\r", f"接受修订后内容应保留: {app.doc.content!r}"
+    assert not model.has_revisions()
+    # 修订模式下块编辑：拒绝插入块可回滚新增内容
+    model.insert_at_end("第二段")
+    assert model.has_revisions()
+    model.reject_block_revisions(1)
+    assert "第二段" not in app.doc.content
+    print("ok: 修订模式（接受 insertion 保留新内容、多块场景拒绝新增）")
+
+
+def test_save_load_blocks():
+    app, writer, model = make()
+    writer.write_block("甲段\n\n乙段", animate=False)
+    n = model.save_blocks()
+    assert n == 2, n
+    # 新会话、同一文档：块模型应能从文档变量恢复
+    model2 = DocModel(app, app.doc, app.sel, writer)
+    got = model2.load_blocks()
+    assert got == 2, got
+    assert [b.kind for b in model2.blocks] == ["paragraph", "paragraph"]
+    assert [b.text for b in model2.blocks] == ["甲段", "乙段"]
+    vars_ = app.doc.Variables
+    assert int(vars_("AI4WordBlocks").Value) >= 1
+    print("ok: 块模型持久化（save/load 往返、文档变量分片）")
+
+
+def test_realign_blocks():
+    app, writer, model = make()
+    writer.write_block("甲\n\n乙\n\n丙", animate=False)
+    # 模拟用户手改文档：删掉"乙"段
+    app.doc.content = "甲\r丙\r"
+    n = model.realign_blocks()
+    assert n == 2, f"应重对齐 2 块: {n}"
+    assert model.blocks[0].text == "甲"
+    assert model.blocks[2].text == "丙"
+    assert model.blocks[1].range is None, "失去定位的块 Range 应置空"
+    print("ok: 漂移重对齐（按文本相似度钉回段落、失配块置空）")
+
+
+def test_snapshot_undo_redo():
+    app, writer, model = make()
+    writer.write_block("甲", animate=False)
+    model.insert_at_end("插")
+    assert app.doc.content == "甲\r插\r", app.doc.content
+    assert model.model_undo()
+    assert app.doc.content == "甲\r", app.doc.content
+    assert model.model_redo()
+    assert app.doc.content == "甲\r插\r", app.doc.content
+    print("ok: 块级快照撤销/重做（整篇重写级）")
+
+
+def test_txn_rollback_commit():
+    app, writer, model = make()
+    writer.write_block("甲", animate=False)
+    model.begin_txn()
+    model.replace_block(0, "乙")
+    assert app.doc.content == "乙\r", app.doc.content
+    model.rollback_txn()
+    assert app.doc.content == "甲\r", f"回滚失败: {app.doc.content!r}"
+    model.begin_txn()
+    model.replace_block(0, "丙")
+    model.commit_txn()
+    assert app.doc.content == "丙\r", app.doc.content
+    # 已提交的事务作为一条快照撤销记录
+    assert model.model_undo()
+    assert app.doc.content == "甲\r", app.doc.content
+    assert model.model_redo()
+    assert app.doc.content == "丙\r", app.doc.content
+    print("ok: 事务（rollback 回滚 / commit 后可整条撤销重做）")
+
+
+def test_apply_preset():
+    app, writer, model = make()
+    r = apply_preset(app.doc, "论文")
+    assert r["preset"] == "论文"
+    normal = app.doc.Styles(-1)
+    assert normal.Font.Name == "宋体", normal.Font.Name
+    assert normal.Font.Size == 12, normal.Font.Size
+    assert normal.ParagraphFormat.FirstLineIndent == 24, \
+        normal.ParagraphFormat.FirstLineIndent
+    assert normal.ParagraphFormat.LineSpacingRule == 1  # 1.5 倍行距
+    h1 = app.doc.Styles(-2)
+    assert h1.Font.Name == "黑体", h1.Font.Name
+    assert h1.Font.Size == 22
+    assert h1.ParagraphFormat.Alignment == 1  # 居中
+    assert "论文" in preset_names()
+    print("ok: 样式预设（正文宋体小四首行缩进、黑体标题整套应用）")
+
+
+def test_toc_header_footer_pagebreak():
+    app, writer, model = make()
+    writer.write_block("甲", animate=False)
+    assert model.insert_toc()
+    assert app.doc.TablesOfContents.Count == 1
+    model.set_header("页眉甲")
+    assert app.doc.Sections(1).Headers(1).Range.Text == "页眉甲"
+    model.set_footer("页脚乙")
+    assert app.doc.Sections(1).Footers(1).Range.Text == "页脚乙"
+    model.insert_page_break()
+    assert "\x0c" in app.doc.content, f"未见分页符: {app.doc.content!r}"
+    print("ok: 长文档布局（目录、页眉页脚、分页符）")
+
+
+def test_speed_gears():
+    from streaming_writer import (_TYPE_BATCH, _TYPE_BATCH_SLOW, _TYPE_BATCH_FAST,
+                                  _DELAY_FACTOR_FAST, _FAST_CHARS)
+    app, writer, model = make()
+    writer.set_speed("fast")
+    assert writer._gear() == (_TYPE_BATCH_FAST, _DELAY_FACTOR_FAST)
+    writer.set_speed("slow")
+    assert writer._gear() == (_TYPE_BATCH_SLOW, 1.0)
+    writer.set_speed("auto")
+    writer._emitted = _FAST_CHARS + 1
+    assert writer._gear() == (_TYPE_BATCH_FAST, _DELAY_FACTOR_FAST)
+    writer.set_speed("auto")
+    assert writer._gear() == (_TYPE_BATCH, 1.0)
+    print("ok: 打字档位（fast/slow/auto 升速逻辑）")
+
+
+def test_block_md_slice():
+    app, writer, model = make()
+    writer.write_block("甲\n\n乙", animate=False)
+    assert [b.md for b in model.blocks] == ["甲", "乙"], \
+        [b.md for b in model.blocks]
+    assert_aligned(model, app)
+    print("ok: 块 md 切片（各块登记自己原始 markdown）")
+
+
 if __name__ == "__main__":
     test_streaming_write()
     test_block_split_mid_token()
@@ -778,4 +1323,17 @@ if __name__ == "__main__":
     test_greedy_alignment_and_undo()
     test_apply_and_preview_edit()
     test_watch_detects_user_edit()
+    test_image_fallback_alt()
+    test_heading_inline_image()
+    test_draft_image_commit()
+    test_review_reject()
+    test_review_accept()
+    test_save_load_blocks()
+    test_realign_blocks()
+    test_snapshot_undo_redo()
+    test_txn_rollback_commit()
+    test_apply_preset()
+    test_toc_header_footer_pagebreak()
+    test_speed_gears()
+    test_block_md_slice()
     print("\n全部测试通过。")
