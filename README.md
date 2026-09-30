@@ -78,7 +78,9 @@ python ai4word.pyw        # 或 python -m app
 
 ## 打包与安装包
 
-一键完成「图标生成 → PyInstaller 打包 → Inno Setup 编译安装包」：
+一键完成「图标生成 → PyInstaller 打包 → 依赖探针补漏 → Inno Setup 编译安装包」：
+
+依赖探针（`fix_missing_dlls`）在打包后用 Windows 加载器实测启动所需模块，把 PyInstaller 漏收的 PATH 依赖 DLL（如 conda 系 venv 的 `ffi.dll` / `libssl-3-x64.dll`）显式补进 `_internal`；同时构建 PATH 剔除外来 `icu*.dll`，避免精简版 ICU 串扰 Qt6Core。
 
 ```powershell
 .\.venv\Scripts\python.exe -u build\build.py
@@ -86,10 +88,10 @@ python ai4word.pyw        # 或 python -m app
 
 产物：
 
-- `dist\AI4Word\AI4Word.exe`：解压即用的程序目录（约 106MB，已裁剪 QML / PDF / 软件渲染 / 多余翻译与插件等无用组件）。
-- `dist\AI4Word-Setup-8.1.exe`：安装包（约 31MB，LZMA2 压缩，简体中文安装向导，打包机缺中文 isl 时自动降级英文）——开始菜单组、桌面快捷方式（可选）、开机自启任务（可选）、卸载时清理自启注册项。
+- `dist\AI4Word\AI4Word.exe`：解压即用的程序目录（约 70MB，已裁剪 QML / PDF / 软件渲染 / 多余翻译与插件等无用组件）。
+- `dist\AI4Word-Setup-8.2.exe`：安装包（约 23MB，LZMA2 压缩，简体中文安装向导，打包机缺中文 isl 时自动降级英文）——开始菜单组、桌面快捷方式（可选）、开机自启任务（可选）、卸载时清理自启注册项。
 
-要求：Windows x64 且已安装 Microsoft Word；打包机需 Inno Setup 6（未检测到则跳过安装包步骤、仅输出 `.iss` 供自行编译）与 `requirements-dev.txt` 中的 PyInstaller / Pillow。图标由 `build/icon_gen.py` 用 QPainter + PIL 现场生成，无外部图片资源依赖。
+要求：Windows 10 1903+ / Windows 11 x64 且已安装 Microsoft Word（程序不捆绑外来 ICU，运行时解析系统自带 ICU）；打包机需 Inno Setup 6（未检测到则跳过安装包步骤、仅输出 `.iss` 供自行编译）与 `requirements-dev.txt` 中的 PyInstaller / Pillow。图标由 `build/icon_gen.py` 用 QPainter + PIL 现场生成，无外部图片资源依赖。
 
 ## 使用方法
 

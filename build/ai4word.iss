@@ -1,7 +1,7 @@
 ; AI4Word 安装包脚本（Inno Setup 6）
 ; 用法：ISCC build\ai4word.iss   （build\build.py 会自动调用）
 #define MyAppName "AI4Word"
-#define MyAppVersion "8.1"
+#define MyAppVersion "8.2"
 #define MyAppPublisher "AI4Word"
 #define MyAppExeName "AI4Word.exe"
 #define MyAppDir "..\dist\AI4Word"
@@ -29,6 +29,11 @@ CloseApplications=force
 
 [Languages]
 {LANGUAGES}
+
+[InstallDelete]
+; 升级时清理历史版本误打包进来的外来 ICU 与 pywin32 附带 IDE
+Type: files; Name: "{app}\_internal\icu*.dll"
+Type: filesandordirs; Name: "{app}\_internal\Pythonwin"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
