@@ -5,7 +5,7 @@ ai_request 是非流式接口，用于排版阶段让 AI 生成代码（一次�
 
 Atria 是 Intern AI（discovery 平台，https://discovery.intern-ai.org.cn/）提供的
 大模型服务，接口为 OpenAI 兼容风格：https://discovery-api.intern-ai.org.cn/v1
-模型名可用环境变量 ATRIA_MODEL 覆盖（默认 "atria"），密钥用 ATRIA_API_KEY。
+默认模型为 Atria-Dawn-Preview，可用环境变量 ATRIA_MODEL 覆盖，密钥用 ATRIA_API_KEY。
 """
 import json
 import os
@@ -13,7 +13,7 @@ import os
 import requests
 
 API_URL = "https://discovery-api.intern-ai.org.cn/v1/chat/completions"
-DEFAULT_MODEL = "atria"
+DEFAULT_MODEL = "Atria-Dawn-Preview"
 
 
 def _model(model):
