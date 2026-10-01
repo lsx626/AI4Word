@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """设置对话框：API 密钥 / 服务地址 / 模型 / 开机自启 / 窗口置顶。"""
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox,
-                                QFormLayout, QHBoxLayout, QLabel, QLineEdit,
+from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QFormLayout,
+                                QHBoxLayout, QLabel, QLineEdit, QMessageBox,
                                 QPushButton, QVBoxLayout)
 
 from app.auto_start import disable, enable, is_enabled
@@ -75,15 +75,29 @@ class SettingsDialog(QDialog):
         self.settings.set("base_url", self.url_edit.text().strip() or DEFAULT_BASE_URL)
         self.settings.set("model", self.model_edit.text().strip() or DEFAULT_MODEL)
         self.settings.set("stay_on_top", self.top_check.isChecked())
-        self.settings.save()
         self.settings.apply_env()
         if self.worker is not None:
             self.worker.set_api_key(self.settings.get("api_key"))
+
+        # 开机自启：注册表写入可能失败（组策略 / 杀软拦截），必须反馈，
+        # 否则复选框勾着、settings 记着，下次开机却不自启
         want_auto = self.auto_check.isChecked()
         if want_auto:
-            enable()
+            ok_auto = enable()
+            if not ok_auto:
+                QMessageBox.warning(self, "开机自启", "写入注册表失败（可能被杀毒软件或"
+                                    "组策略拦截），开机自启未能生效。可在系统设置里"
+                                    "手动添加启动项。")
+                self.auto_check.setChecked(False)
+                want_auto = False
         else:
             disable()
         self.settings.set("auto_start", want_auto)
-        self.settings.save()
+
+        # 保存失败不能静默：用户会以为密钥已经存好
+        if not self.settings.save():
+            QMessageBox.warning(self, "保存失败", f"设置未能写入磁盘（目录不可写或被占用）：\n"
+                                f"{self.settings.path}\n本次会话仍按新设置使用，"
+                                f"重启后失效。")
+            return
         super().accept()

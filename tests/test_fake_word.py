@@ -608,6 +608,89 @@ class FakeVariables:
         return len(self._doc._vars)
 
 
+class _FakeContentProxy:
+    """doc.Content 的替身：转发属性到 FakeDoc，Find 返回可替换的 FakeFind。"""
+
+    def __init__(self, doc):
+        self._doc = doc
+
+    def __getattr__(self, name):
+        return getattr(self._doc, name)
+
+    @property
+    def Find(self):
+        return FakeFind(self._doc)
+
+
+class FakeFindReplacement:
+    """Find.Replacement 的替身：ClearFormatting + Text。"""
+
+    def ClearFormatting(self):
+        pass
+
+    @property
+    def Text(self):
+        return ""
+
+    @Text.setter
+    def Text(self, v):
+        pass
+
+
+class FakeFind:
+    """极简的查找替换：在 fake 文档内容上做字符串替换并平移区间。"""
+
+    def __init__(self, doc):
+        self._doc = doc
+        self._repl = FakeFindReplacement()
+
+    def ClearFormatting(self):
+        pass
+
+    @property
+    def Replacement(self):
+        return self._repl
+
+    @Replacement.setter
+    def Replacement(self, v):
+        # doc_model 会做 f.Replacement.ClearFormatting() 与赋值
+        self._repl = v if isinstance(v, FakeFindReplacement) else self._repl
+
+    @property
+    def Text(self):
+        return self._doc._find_state.get("text", "")
+
+    @Text.setter
+    def Text(self, v):
+        self._doc._find_state["text"] = v
+
+    def Execute(self, find_text, *args):
+        # 位置参数（find_text 之后的）：MatchCase, MatchWholeWord, MatchWildcards,
+        # MatchSoundsLike, MatchAllWordForms, Forward, Wrap, Format,
+        # ReplaceWith, Replace
+        replace_with = args[8] if len(args) > 8 else ""
+        replace_all = len(args) > 9 and args[9] == 2
+        if not find_text:
+            return False
+        s = self._doc.content
+        if find_text not in s:
+            return False
+        pos = 0
+        n = 0
+        while True:
+            i = s.find(find_text, pos)
+            if i < 0:
+                break
+            self._doc._delete(i, i + len(find_text))
+            self._doc._insert(i, str(replace_with))
+            s = self._doc.content
+            n += 1
+            pos = i + len(replace_with)
+            if not replace_all:
+                break
+        return n > 0
+
+
 class FakeDoc:
     def __init__(self, app):
         self.app = app
@@ -627,13 +710,16 @@ class FakeDoc:
         self._track = False
         self._suppress_rev = False
         self._revisions = []
+        self._find_state = {}  # FakeFind 的 Text/Replacement 状态
 
     def Range(self, a, b):
         return FakeRange(self, a, b)
 
     @property
     def Content(self):
-        return self
+        # 带一个可工作的 Find（Word 里 Find 悬挂在 Content/Range 上），
+        # 供 replace_text 等路径在离线环境里真实跑通
+        return _FakeContentProxy(self)
 
     @property
     def Paragraphs(self):

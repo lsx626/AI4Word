@@ -43,7 +43,12 @@ def get_base_url():
 
 
 def ai_request(prompt, api_key, system_prompt, model=DEFAULT_MODEL, timeout=180):
-    """非流式请求，返回完整文本；出错返回 None。"""
+    """非流式请求，返回完整文本。
+
+    出错时**抛出异常**（网络错误 / HTTP 4xx/5xx 等）：调用方（GUI 引擎与
+    CLI）负责捕获并给用户可见的反馈。老版本吞掉异常只 print，打包后的
+    无控制台程序里用户完全看不到失败原因。
+    """
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
     data = {
         "model": _model(model),
@@ -52,19 +57,16 @@ def ai_request(prompt, api_key, system_prompt, model=DEFAULT_MODEL, timeout=180)
             {"role": "user", "content": prompt},
         ],
     }
-    try:
-        resp = requests.post(API_URL, headers=headers, json=data, timeout=timeout)
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
-    except Exception as e:
-        print(f"调用API时出错: {e}")
-        return None
+    resp = requests.post(API_URL, headers=headers, json=data, timeout=timeout)
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"]
 
 
 def ai_stream(prompt, api_key, system_prompt, model=DEFAULT_MODEL, connect=10, read=600):
     """流式请求（SSE），逐个 yield 内容片段。
 
-    生成结束自然 return；网络或 HTTP 错误时打印错误并 return。
+    生成结束自然 return；网络或 HTTP 错误时**抛出异常**——吞掉只 print 的
+    话，窗口化打包的 GUI 里用户对失败一无所知（引擎会 catch 并提示）。
     """
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
     data = {
@@ -75,30 +77,27 @@ def ai_stream(prompt, api_key, system_prompt, model=DEFAULT_MODEL, connect=10, r
             {"role": "user", "content": prompt},
         ],
     }
-    try:
-        with requests.post(
-            API_URL, headers=headers, json=data, stream=True, timeout=(connect, read)
-        ) as resp:
-            resp.raise_for_status()
-            for raw in resp.iter_lines(decode_unicode=True):
-                if not raw:
-                    continue
-                line = raw.strip()
-                if not line.startswith("data:"):
-                    continue
-                payload = line[len("data:"):].strip()
-                if payload == "[DONE]":
-                    return
-                try:
-                    chunk = json.loads(payload)
-                except json.JSONDecodeError:
-                    continue
-                choices = chunk.get("choices") or []
-                if not choices:
-                    continue
-                delta = choices[0].get("delta") or {}
-                piece = delta.get("content")
-                if piece:
-                    yield piece
-    except Exception as e:
-        print(f"流式请求出错: {e}")
+    with requests.post(
+        API_URL, headers=headers, json=data, stream=True, timeout=(connect, read)
+    ) as resp:
+        resp.raise_for_status()
+        for raw in resp.iter_lines(decode_unicode=True):
+            if not raw:
+                continue
+            line = raw.strip()
+            if not line.startswith("data:"):
+                continue
+            payload = line[len("data:"):].strip()
+            if payload == "[DONE]":
+                return
+            try:
+                chunk = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+            choices = chunk.get("choices") or []
+            if not choices:
+                continue
+            delta = choices[0].get("delta") or {}
+            piece = delta.get("content")
+            if piece:
+                yield piece

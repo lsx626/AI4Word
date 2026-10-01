@@ -83,6 +83,7 @@ def main():
     prep = None
 
     worker = AgentWorker(word_factory=_word)
+    worker.set_api_key("test-key")  # 空密钥守卫会拦截写入流（本测试打桩 ai_stream）
     rec = _Rec(worker)
     worker.start()
     QTest.qWait(100)

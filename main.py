@@ -80,21 +80,26 @@ def main():
         print("\n正在流式生成并以动画效果写入 Word（按 ESC 可中断）...")
         writer.set_speed("auto")
         snap_before = model.snapshot()
-        received = False
+        received = 0
         interrupted = False
-        for piece in ai_stream(prompt, api_key, system_prompt):
-            if _esc_pressed():
-                interrupted = True
-                break
-            if not piece:
-                continue
-            received = True
-            print(piece, end="", flush=True)  # 终端同步显示流式原文
-            writer.feed(piece)
+        try:
+            for piece in ai_stream(prompt, api_key, system_prompt):
+                if _esc_pressed():
+                    interrupted = True
+                    break
+                if not piece:
+                    continue
+                received += len(piece)
+                print(piece, end="", flush=True)  # 终端同步显示流式原文
+                writer.feed(piece)
+        except Exception as e:
+            print(f"\n流式生成出错：{e}")
         writer.flush()
         print()  # 换行结束终端原文回显
         if received:
             print("写入完成。")
+        elif not interrupted:
+            print("没有收到任何内容（AI 返回为空）。")
         if interrupted:
             print("生成已被 ESC 中断。")
             choice = input("输入 r 回滚本次生成，输入 w 保留并追加补充（回车=保留现状）：").strip().lower()
@@ -109,9 +114,14 @@ def main():
                 if extra:
                     writer.set_speed("auto")
                     print("\n正在流式追加补充内容...")
-                    for piece in ai_stream(extra, api_key, system_prompt):
-                        print(piece, end="", flush=True)
-                        writer.feed(piece)
+                    try:
+                        for piece in ai_stream(extra, api_key, system_prompt):
+                            if _esc_pressed():
+                                break
+                            print(piece, end="", flush=True)
+                            writer.feed(piece)
+                    except Exception as e:
+                        print(f"\n追加生成出错：{e}")
                     writer.flush()
                     print()
         try:
@@ -143,12 +153,22 @@ def main():
             # 用户在生成期间动过文档：把漂移警告带给代码生成模型，避免按旧结构猜索引
             prompt += "\n\n注意：用户在我生成期间手动编辑了文档，块索引可能已偏移，"
             prompt += "请先重新调用 block_map() 确认当前结构。"
-        code = gen_code(prompt, api_key, session, block_map_fn=model.block_map)
+        try:
+            code = gen_code(prompt, api_key, session, block_map_fn=model.block_map)
+        except Exception as e:
+            print(f"请求 AI 生成代码失败：{e}")
+            continue
         if not code:
             print("无法理解您的指令或 AI 未返回有效代码。")
             continue
 
         ok, err = run_code(code, exec_globals)
+        if not ok and model.is_txn_active():
+            try:
+                model.rollback_txn()
+                print("已回滚未完成的事务。")
+            except Exception as e:
+                print(f"回滚未完成事务失败：{e}")
         if ok:
             print("代码执行完毕，已应用。")
             session.record_turn(fmt, True)
@@ -158,11 +178,22 @@ def main():
                 pass
             continue
 
-        corrected = fix_code(fmt, code, err, api_key, session)
+        try:
+            corrected = fix_code(fmt, code, err, api_key, session,
+                                 block_map_fn=model.block_map)
+        except Exception as e:
+            print(f"请求 AI 自我修复失败：{e}")
+            continue
         if not corrected:
             print("AI 未能生成有效的修正代码。")
             continue
         ok2, err2 = run_code(corrected, exec_globals)
+        if not ok2 and model.is_txn_active():
+            try:
+                model.rollback_txn()
+                print("已回滚未完成的事务。")
+            except Exception as e:
+                print(f"回滚未完成事务失败：{e}")
         if ok2:
             print("修正代码执行完毕，已应用。")
             session.record_turn(fmt, True)

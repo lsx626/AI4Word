@@ -42,13 +42,16 @@ class AgentWorker(QThread):
     interrupted = Signal()          # 流式被中断 → UI 给出 回滚 / 保留 / 追加
     progress = Signal(str)          # 实时进度文本（生成中/排版中状态条）
 
-    def __init__(self, word_factory=None, parent=None):
-        """word_factory：测试用注入的假 Word 构造器；默认是 app.agent.get_word。"""
+    def __init__(self, word_factory=None, attach_factory=None, parent=None):
+        """word_factory：测试用注入的假 Word 构造器；默认是 app.agent.get_word。
+        attach_factory：只附加到已运行 Word 的构造器（不启动新进程），默认
+        app.agent.get_word_attach；供「块地图」这类查看类命令。"""
         super().__init__(parent)
         if word_factory is None:
             from app.agent import get_word as _real_get_word
             word_factory = _real_get_word
         self._factory = word_factory
+        self._attach_factory = attach_factory
         self._queue = queue.Queue()
         self._choice_q = queue.Queue()
         self._interrupt = threading.Event()
@@ -80,6 +83,23 @@ class AgentWorker(QThread):
 
     def set_api_key(self, key):
         self._api_key = (key or "").strip()
+
+    def set_speed(self, mode):
+        """直接设置打字档位（GUI 线程可随时调用，立即对进行中的生成生效）。
+
+        不能只靠 send('speed') 走命令队列：worker 线程在处理 write 期间
+        不消费队列，等生成结束才执行就完全没有实时效果了。这里直接写
+        纯 Python 属性（GIL 原子，无 COM 调用），_gear() 每批读取。
+        """
+        if mode not in ("auto", "slow", "fast"):
+            return
+        self._speed = mode
+        w = self._writer
+        if w is not None:
+            try:
+                w.set_speed(mode)
+            except Exception:
+                pass
 
     # ---------- 线程主循环 ----------
 
@@ -139,8 +159,12 @@ class AgentWorker(QThread):
 
     def _handle(self, cmd, payload):
         try:
-            if cmd in ("write", "arrange", "preset", "select_block", "save", "review", "refresh_map"):
-                if not self._ensure_ready():
+            # 写入/排版类命令：必要时启动 Word；查看类命令只附加到已运行的 Word
+            if cmd in ("write", "arrange", "preset", "save", "review"):
+                if not self._ensure_ready(launch=True):
+                    return
+            elif cmd in ("select_block", "refresh_map"):
+                if not self._ensure_ready(launch=False):
                     return
             if cmd == "write":
                 self._cmd_write(payload)
@@ -171,50 +195,36 @@ class AgentWorker(QThread):
 
     # ---------- Word 连接与环境装配 ----------
 
-    def _ensure_ready(self):
+    def _ensure_ready(self, launch=True):
+        """确保 Word 环境已装配。launch=True 时必要时启动 Word；launch=False
+        时只附加到已运行的 Word（供「块地图」这类查看类命令，不打扰用户）。"""
         if self._model is not None:
+            self._rebind_if_switched()
             return True
         self.stateChanged.emit("connecting")
         self.wordStatus.emit("正在连接 Word…")
         self._set_progress("正在连接 Word…")
+        app = None
         try:
-            app = self._factory()
+            if launch:
+                app = self._factory()
+            else:
+                app = self._attach_word() if self._attach_factory is None \
+                    else self._attach_factory()
         except Exception:
             app = None
         if app is None:
-            self.message.emit("error", "无法连接 Microsoft Word，请先打开 Word 后再试。")
+            if launch:
+                self.message.emit("error", "无法连接 Microsoft Word，请先打开 Word 后再试。")
+            else:
+                self.message.emit("info", "Word 未运行；发送写作或排版指令后会自动启动并连接。")
             self.wordStatus.emit("未连接 Word")
             self.stateChanged.emit("idle")
             return False
         try:
             doc = app.Documents.Add() if app.Documents.Count == 0 else app.ActiveDocument
             sel = app.Selection
-            writer = StreamingWriter(app, doc, sel, model=None, char_delay=0.01)
-            model = DocModel(app, doc, sel, writer)
-            writer.model = model
-            session = Session()
-            try:
-                restored = model.load_blocks()
-            except Exception:
-                restored = 0
-            self._app, self._doc, self._sel = app, doc, sel
-            self._writer, self._model, self._session = writer, model, session
-            self._exec_globals = build_exec_globals(app, doc, sel, model, writer, session)
-            name = "(未命名文档)"
-            try:
-                name = str(doc.Name) or name
-            except Exception:
-                pass
-            self.wordStatus.emit(f"已连接 · {name}")
-            if restored:
-                self.message.emit("info", f"已从文档恢复 {restored} 个块索引。")
-            else:
-                # 首次接入没有任何存档的文档（例如用户新打开的非空文档）：
-                # 把现有内容读进块模型，块地图与编辑原语即可作用于已有文字
-                imported = self._import_if_nonempty(model)
-                if imported:
-                    self.message.emit("info", f"已读取现有文档 {imported} 个块。")
-            self._emit_map()
+            self._assemble(app, doc, sel)
         except Exception as e:
             self.message.emit("error", f"初始化 Word 环境失败：{e}")
             self.wordStatus.emit("未连接 Word")
@@ -222,6 +232,75 @@ class AgentWorker(QThread):
             return False
         self.stateChanged.emit("idle")
         return True
+
+    def _attach_word(self):
+        """只附加到已运行的 Word；没运行则返回 None（不启动新进程）。"""
+        try:
+            import win32com.client
+            return win32com.client.GetObject(None, "Word.Application")
+        except Exception:
+            return None
+
+    def _assemble(self, app, doc, sel):
+        """把 writer / model / exec_globals 绑定到指定文档。"""
+        writer = StreamingWriter(app, doc, sel, model=None, char_delay=0.01)
+        model = DocModel(app, doc, sel, writer)
+        writer.model = model
+        session = self._session or Session()
+        try:
+            restored = model.load_blocks()
+        except Exception:
+            restored = 0
+        self._app, self._doc, self._sel = app, doc, sel
+        self._writer, self._model, self._session = writer, model, session
+        self._exec_globals = build_exec_globals(app, doc, sel, model, writer, session)
+        name = "(未命名文档)"
+        try:
+            name = str(doc.Name) or name
+        except Exception:
+            pass
+        self.wordStatus.emit(f"已连接 · {name}")
+        if restored:
+            self.message.emit("info", f"已从文档恢复 {restored} 个块索引。")
+        else:
+            # 首次接入没有任何存档的文档（例如用户新打开的非空文档）：
+            # 把现有内容读进块模型，块地图与编辑原语即可作用于已有文字
+            imported = self._import_if_nonempty(model)
+            if imported:
+                self.message.emit("info", f"已读取现有文档 {imported} 个块。")
+        self._emit_map()
+
+    def _rebind_if_switched(self):
+        """用户在 Word 里切换了活动文档 → 把引擎重新绑定到新文档。
+
+        否则缓存的 doc/sel/model 指向用户已经不看的旧文档，后续生成与
+        编辑会写进旧文档里。只在命令之间（非生成中）检查：生成期间的
+        文档切换由写入锚点保护（锚点 Range 属于原写入文档）。
+        """
+        if self._app is None or self._model is None:
+            return
+        try:
+            active = self._app.ActiveDocument
+            if active is None:
+                return
+        except Exception:
+            return  # 一个文档都没开：保持原绑定，后续调用自然暴露错误
+        try:
+            if active.FullName == self._doc.FullName:
+                return
+        except Exception:
+            try:
+                if active.Name == self._doc.Name:
+                    return
+            except Exception:
+                return
+        try:
+            sel = self._app.Selection
+            doc = active
+            self._assemble(self._app, doc, sel)
+            self.message.emit("info", "检测到你切换了文档，已重新绑定到当前活动文档。")
+        except Exception as e:
+            self.message.emit("error", f"切换文档失败：{e}")
 
     def _reset_if_dead(self, err):
         """COM 连接已断（Word 被关掉）时，下次命令重新连接。"""
@@ -231,6 +310,8 @@ class AgentWorker(QThread):
             self._app = None
             self._model = None
             self.wordStatus.emit("未连接 Word")
+            # 清掉过期块地图，避免 UI 继续显示已失效的文档结构
+            self.blockMap.emit("")
 
     def _emit_map(self):
         if self._model is None:
@@ -256,6 +337,9 @@ class AgentWorker(QThread):
             self.message.emit("info", "正在处理上一条指令，请先中断。")
             return
         if not (prompt or "").strip():
+            return
+        if not (self._api_key or "").strip():
+            self.message.emit("error", "尚未填写 Atria API 密钥：右键托盘 → 设置，或在设置面板里填入。")
             return
         self._busy = True
         self._interrupt.clear()
@@ -295,6 +379,9 @@ class AgentWorker(QThread):
         if received and not self._interrupted:
             self.message.emit("info", "已写入 Word。")
             self._set_progress(f"已写入 Word · 共 {received} 字")
+        elif not received and not self._interrupted:
+            # 流程正常走完但没有一个字（比如空回复）：明确告知，而不是静默
+            self.message.emit("error", "没有收到任何内容（AI 返回为空）。")
         try:
             self._model.save_blocks()
         except Exception:
@@ -311,6 +398,13 @@ class AgentWorker(QThread):
         """中断后等用户选：回滚 / 保留 / 追加补充（超时 5 分钟按保留处理）。"""
         self.message.emit("info", "已中断。可回滚本次生成、保留现状，或追加补充内容。")
         self.interrupted.emit()
+        # 先清掉历史残留的选择（UI 双击等时序可能留下陈旧选择，
+        # 否则下一次中断会被它立刻消费，造成「自动回滚」的意外行为）
+        while True:
+            try:
+                self._choice_q.get_nowait()
+            except queue.Empty:
+                break
         try:
             choice = self._choice_q.get(timeout=300)
         except queue.Empty:
@@ -340,6 +434,9 @@ class AgentWorker(QThread):
                 self.streamStart.emit()
                 try:
                     for piece in ai_stream(extra, self._api_key, system):
+                        if self._interrupt.is_set():
+                            self._interrupted = True
+                            break
                         self.streamChunk.emit(piece)
                         self._writer.feed(piece)
                         received += len(piece)
@@ -410,6 +507,10 @@ class AgentWorker(QThread):
             ok, err = run_code(code, self._exec_globals, sink=sink)
         except Exception as e:
             ok, err = False, f"{type(e).__name__}: {e}"
+        if not ok:
+            # 事务卡住时先回滚：修正代码将在「未受污染」的结构上重试，
+            # 而不是在改了一半的文档上按原始指令臆测索引
+            self._abort_txn_if_stuck()
         if ok:
             self.message.emit("info", "代码执行完毕，已应用。")
             self._session.record_turn(prompt, True)
@@ -420,6 +521,7 @@ class AgentWorker(QThread):
             return
 
         if self._interrupt.is_set():
+            self._abort_txn_if_stuck()
             self.message.emit("info", "已取消自我修复。")
             self._busy = False
             self.stateChanged.emit("idle")
@@ -427,8 +529,11 @@ class AgentWorker(QThread):
         corrected = None
         self._set_progress("排版失败，正在自我修复…")
         try:
+            # 带上当前 block_map：第一轮代码可能已改了一半文档，
+            # 修正代码须看到变化后的结构而不是按原始指令臆测索引
             corrected = fix_code(full_prompt, code, err, self._api_key,
-                                 self._session, sink=sink)
+                                 self._session, sink=sink,
+                                 block_map_fn=self._model.block_map)
         except Exception as e:
             self.message.emit("error", f"自我修复请求失败：{e}")
         if corrected is None:
@@ -446,6 +551,7 @@ class AgentWorker(QThread):
             self._persist()
             self._emit_map()
         else:
+            self._abort_txn_if_stuck()
             self.message.emit("error", f"自我修复仍然失败（{err2}），试试更简单的指令。")
             self._session.record_turn(prompt, False)
         self._busy = False
@@ -456,6 +562,17 @@ class AgentWorker(QThread):
             self._model.save_blocks()
         except Exception:
             pass
+
+    def _abort_txn_if_stuck(self):
+        """AI 代码中途失败时事务可能卡在开始状态（run_code 抛错即中止，
+        不会调 rollback_txn）：_txn_active 不复位会让之后的编辑全都不入
+        快照栈、再次 begin_txn 也直接报错。排版失败时主动回滚。"""
+        try:
+            if self._model.is_txn_active():
+                self._model.rollback_txn()
+                self.message.emit("info", "已回滚未完成的事务。")
+        except Exception as e:
+            self.message.emit("error", f"回滚未完成事务失败：{e}")
 
     # ---------- 简单命令 ----------
 

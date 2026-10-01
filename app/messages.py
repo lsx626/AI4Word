@@ -148,8 +148,21 @@ class MessageList(QScrollArea):
         # 全宽气泡（Slack 式）：流式长文本一行能容纳更多字，进度最清晰；
         # 发送方用颜色区分（用户=琥珀、助手=墨灰），不再依赖左右对齐
         self._layout.insertWidget(self._layout.count() - 1, b)
+        self._trim()
         self._scroll_bottom()
         return b
+
+    def _trim(self, keep=200):
+        """长会话防爆：只保留最近 keep 条气泡，老的移除释放。"""
+        total = self._layout.count() - 1  # 末尾是 stretch
+        while total > keep:
+            it = self._layout.takeAt(0)
+            if it is None:
+                break
+            w = it.widget()
+            if w is not None:
+                w.deleteLater()
+            total -= 1
 
     def begin_stream(self):
         self._streaming = self.add("assistant", "")
@@ -158,13 +171,21 @@ class MessageList(QScrollArea):
     def stream_append(self, piece):
         if self._streaming is not None:
             self._streaming.append_text(piece)
-            self._scroll_bottom()
+            # 用户上滚阅读历史时不要把视图拽回底部（每个 chunk 都拽一次
+            # 根本没法看）；生成结束（end_stream）再回到底部
+            if self._at_bottom():
+                self._scroll_bottom()
 
     def end_stream(self):
         if self._streaming is not None:
             self._streaming.finalize()
             self._streaming = None
             self._scroll_bottom()
+
+    def _at_bottom(self):
+        """用户是否停在消息流底部（允许 16px 的抖动余量）。"""
+        bar = self.verticalScrollBar()
+        return bar.maximum() - bar.value() <= 16
 
     def _scroll_bottom(self):
         """滚到底部：立即滚一次（气泡高度同步可知时），布局生效后再滚一次。

@@ -4,11 +4,13 @@ run_code 直接执行 LLM 生成的 Python，逐语句可视化只能"看见"它
 挡不住真正的危险动作（文件、网络、import、死循环）。exec 前在这里做两件事：
 
 1. 静态检查 check()：禁止 import / while / with / 双下划线属性 / 危险内建
-   （open、exec、eval、getattr 等）；合法的排版代码（属性赋值、块函数调用、
-   有限 for 循环）不受影响。
+   （open、exec、eval、getattr 等）、BaseException 家族（raise SystemExit
+   会逃出 except Exception 杀死 worker 线程）、COM 自动化面的高危成员
+   （word_app.Run 执行任意 VBA 宏）；合法的排版代码（属性赋值、块函数
+   调用、有限 for 循环）不受影响。
 2. 循环护栏 instrument()：给每个 for 循环体头部注入步数计数调用，
-   run_code 注入的 __guard_step 会在总步数超限时抛 SandboxError，
-   把死循环掐死在可承受的范围内。
+   run_code 注入的 __guard_step 共享同一个计数器，总步数超限时抛
+   SandboxError，把死循环掐死在可承受的范围内。
 """
 import ast
 
@@ -18,6 +20,9 @@ BANNED_NAMES = frozenset({
     "getattr", "setattr", "delattr", "globals", "locals", "vars", "help",
     "exit", "quit", "super", "memoryview", "iter", "next", "classmethod",
     "staticmethod",
+    # BaseException 家族：raise SystemExit / KeyboardInterrupt 会穿过
+    # run_code 的 except Exception，直接终结进程或 worker 线程
+    "BaseException", "SystemExit", "KeyboardInterrupt", "GeneratorExit",
 })
 
 # 禁止的语句类型（import 链、无界循环、上下文管理器、显式作用域操纵）
@@ -26,6 +31,13 @@ BANNED_STMTS = (
     ast.AsyncWith, ast.Global, ast.Nonlocal, ast.AsyncFor, ast.Await,
     ast.Delete, ast.TryStar,
 )
+
+# COM 自动化面上的高危成员名：word_app.Run 能执行任意 VBA 宏（等于完全
+# 机器控制）、System.PrivateProfileString 读写任意文件、Documents.Open
+# 打开任意外部文档。AI 排版代码不需要它们
+BANNED_ATTRS = frozenset({
+    "Run", "System", "Shell", "WScript", "Documents", "Open",
+})
 
 MAX_STEPS = 50000  # for 循环总步数上限（排版脚本是有限的小循环）
 
@@ -66,6 +78,13 @@ def check(tree):
                 raise SandboxError(f"禁止双下划线名: {nm}")
             if nm in BANNED_NAMES:
                 raise SandboxError(f"禁止调用内建: {nm}")
+            if nm in BANNED_ATTRS:
+                raise SandboxError(f"禁止调用 COM 成员: {nm}")
+        # 字符串常量里的双下划线藏不住 AST：「{0.__globals__}」.format(x)
+        # 的迷你语言支持属性/下标链，能拿到模块 internals 的 repr
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if "__" in node.value:
+                raise SandboxError("字符串常量含双下划线（疑似 format 链逃逸）")
 
 
 class _GuardInstrument(ast.NodeTransformer):

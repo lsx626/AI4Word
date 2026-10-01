@@ -61,6 +61,10 @@ def main(argv=None):
 
     code = app.exec()
     try:
+        # 退出时若 worker 正卡在「中断选择等待」上（_wait_choice 阻塞
+        # 最多 5 分钟），quit 要等它结束才被处理 → 进程僵死。
+        # 先喂一个 keep 选择解除等待，quit 随即被消费。
+        worker.choose("keep")
         worker.send("quit")
         worker.wait(4000)
     except Exception:

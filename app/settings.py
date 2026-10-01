@@ -21,14 +21,40 @@ DEFAULTS = {
 
 
 def user_dir():
-    """设置目录：%APPDATA%（无则用户主目录）。"""
+    """设置目录：%APPDATA%（无则用户主目录；再失败回退 %TEMP%）。
+
+    回退不用 CWD：开机自启（Run 键）启动时 CWD 常常是 System32 之类
+    的不可写目录，后续 save() 会静默失败。
+    """
     base = os.environ.get("APPDATA") or os.path.expanduser("~")
     d = os.path.join(base, APP_NAME)
     try:
         os.makedirs(d, exist_ok=True)
     except OSError:
-        d = os.path.abspath(".")
+        d = os.path.join(os.environ.get("TEMP") or os.path.expanduser("~") or ".",
+                          APP_NAME)
+        try:
+            os.makedirs(d, exist_ok=True)
+        except OSError:
+            d = os.path.abspath(".")
     return d
+
+
+# 各键的合法类型校验：JSON 语法合法但值类型错误（手改 / 同步软件写错）
+# 会让 QRect(str, str) / QLineEdit(int) 之类在启动时直接崩溃，
+# 这里在合并时丢弃非法值，回退默认。
+_VALIDATORS = {
+    "api_key": lambda v: isinstance(v, str),
+    "base_url": lambda v: isinstance(v, str),
+    "model": lambda v: isinstance(v, str),
+    "auto_start": lambda v: isinstance(v, bool),
+    "stay_on_top": lambda v: isinstance(v, bool),
+    "speed": lambda v: isinstance(v, str) and v in ("auto", "slow", "fast"),
+    "expanded": lambda v: isinstance(v, bool),
+    "geometry": lambda v: (isinstance(v, (list, tuple)) and len(v) == 2
+                            and all(isinstance(x, (int, float)) and not isinstance(x, bool)
+                                    for x in v)),
+}
 
 
 class Settings:
@@ -42,22 +68,28 @@ class Settings:
         try:
             with open(self.path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            if isinstance(data, dict):
-                for k, v in data.items():
-                    if k in DEFAULTS or k.startswith("_free_"):
-                        self._data[k] = v
         except (OSError, ValueError):
-            pass  # 首次运行 / 损坏：沿用默认值
+            return self  # 首次运行 / 语法损坏：沿用默认值
+        if isinstance(data, dict):
+            for k, v in data.items():
+                if k in _VALIDATORS:
+                    if _VALIDATORS[k](v):
+                        self._data[k] = v
+                    # 非法类型：丢弃，用默认值（防止启动崩溃）
+                elif k.startswith("_free_"):
+                    self._data[k] = v
         return self
 
     def save(self):
+        """原子保存；返回是否成功（失败时让调用方提示用户，而不是静默吞掉）。"""
         tmp = self.path + ".tmp"
         try:
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self._data, f, ensure_ascii=False, indent=2)
             os.replace(tmp, self.path)
         except OSError:
-            pass
+            return False
+        return True
 
     def get(self, key, default=None):
         return self._data.get(key, default)

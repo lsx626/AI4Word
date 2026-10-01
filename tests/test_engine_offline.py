@@ -104,6 +104,7 @@ def _streamer(chunks, tail=None):
 def _start_worker(rec_cls=None):
     app, _w, _m = _fake.make()
     worker = AgentWorker(word_factory=lambda: _AppShell(app))
+    worker.set_api_key("test-key")  # 空密钥守卫会拦截写入流
     rec = _Recorder(worker)
     worker.start()
     QTest.qWait(100)

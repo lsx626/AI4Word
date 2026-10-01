@@ -136,10 +136,19 @@ class DocModel:
         for bi, b in enumerate(self.blocks):
             if idx >= total:
                 warning = f"文档比块模型短：块 {bi}（{b.kind}）起已无对应段落"
-                break
+                # 失配块必须失活：保留过时的活 Range，refresh_texts 会读出
+                # 错误文本喂给 block_map，之后的 delete/replace 会在错位
+                # 内容上操作（对照 realign_blocks 的安全做法）
+                b.range = None
+                continue
             n = min(b.n_paras, total - idx)
-            start = paras(idx + 1).Range.Start
-            end = paras(idx + n).Range.End - 1  # 去掉末尾段落标记
+            try:
+                start = paras(idx + 1).Range.Start
+                end = paras(idx + n).Range.End - 1  # 去掉末尾段落标记
+            except Exception:
+                # 排版后重分页期 COM 常报 RPC_CALL_REJECTED，与 _com_retry 同源
+                start = _com_retry(lambda: paras(idx + 1).Range.Start)
+                end = _com_retry(lambda: paras(idx + n).Range.End) - 1
             if end < start:
                 end = start
             b.range = _com_retry(lambda: self.doc.Range(start, end))
@@ -172,22 +181,29 @@ class DocModel:
         return "\n".join(lines)
 
     def get_block_text(self, i):
+        self._require_index(i)
         b = self.blocks[i]
         try:
-            return b.range.Text
+            if b.range is not None:
+                return b.range.Text
         except Exception:
-            return b.text
+            pass
+        return b.text
 
     # ---------- 编辑原语（会注入到 AI 生成代码的全局变量里） ----------
 
     def replace_block(self, i, md):
         """用新的 markdown 改写第 i 块（原段落保留，清空内容后重写）。"""
+        self._require_index(i)
+        self._require_md_str(md, "replace_block")
         self._push_undo()
         b = self.blocks[i]
+        if b.range is None:
+            raise ValueError(f"块 {i} 的 Range 已失活（文档与块模型脱节），拒绝写入")
         if b.kind == "table":
             # 表格块：删掉表格本身，保留其后的容器段落作为新内容的写入点
             try:
-                b.range.Tables(1).Delete()
+                _com_retry(lambda: b.range.Tables(1).Delete())
             except Exception:
                 b.range.Delete()
         else:
@@ -198,6 +214,10 @@ class DocModel:
         before_count = len(self.blocks)
         self.writer.write_block(md, animate=True)
         new_blocks = self.blocks[before_count:]
+        if not new_blocks:
+            # write_block 对空 md 返回 [] 会留下孤儿空段落且块索引错位；
+            # _require_md_str 已在入口拒绝空 md，这里防御性兜底
+            raise ValueError("replace_block 写入失败：未登记任何新块")
         del self.blocks[before_count:]
         self.blocks[i:i + 1] = new_blocks
         self.rebuild_ranges()
@@ -206,8 +226,12 @@ class DocModel:
 
     def insert_after(self, i, md):
         """在第 i 块之后插入新内容。"""
+        self._require_index(i)
+        self._require_md_str(md, "insert_after")
         self._push_undo()
         b = self.blocks[i]
+        if b.range is None:
+            raise ValueError(f"块 {i} 的 Range 已失活（文档与块模型脱节），拒绝写入")
         pos = None
         if b.kind == "table":
             # 表格块的 Range 只覆盖到表格本身（不含其后的容器段落），
@@ -234,6 +258,8 @@ class DocModel:
         before_count = len(self.blocks)
         self.writer.write_block(md, animate=True)
         new_blocks = self.blocks[before_count:]
+        if not new_blocks:
+            raise ValueError("insert_after 写入失败：未登记任何新块")
         del self.blocks[before_count:]
         self.blocks[i + 1:i + 1] = new_blocks
         self.rebuild_ranges()
@@ -249,8 +275,11 @@ class DocModel:
 
     def delete_block(self, i):
         """删除第 i 块（连同它占用的全部段落与段落标记）。"""
+        self._require_index(i)
         self._push_undo()
         b = self.blocks[i]
+        if b.range is None:
+            raise ValueError(f"块 {i} 的 Range 已失活（文档与块模型脱节），拒绝写入")
         if b.kind == "table":
             self._delete_table_block(b)
         else:
@@ -272,20 +301,42 @@ class DocModel:
         标记（\x07）的孤儿结构，Tables.Count 不变。必须先 Tables(1).Delete()
         删掉表格结构本身，再把表格删除后残留的容器段落删掉。
         """
+        ok_table = True
         try:
-            b.range.Tables(1).Delete()
+            _com_retry(lambda: b.range.Tables(1).Delete())
         except Exception:
-            pass
+            ok_table = False
         try:
             # 表格删除后动态 Range 塌缩到原位置，容器段落即该位置所在段落
             p = self.doc.Range(b.range.Start, b.range.Start).Paragraphs(1)
             p.Range.Delete()
         except Exception:
-            pass
+            if not ok_table:
+                # 两步都失败（COM 瞬断/Word 忙）：不能仍从模型里弹块——
+                # 文档里表格还在、模型少一块，之后所有索引整体错位
+                raise RuntimeError("删除表格失败：Word 拒绝了删除请求，请重试")
+            return
+        if not ok_table:
+            # 表格删除失败但容器段落已删：仍可能留下 \x07 孤儿，明确返回而非静默
+            raise RuntimeError("表格结构删除失败，留下单元格标记孤儿结构")
 
     def replace_text(self, old, new):
-        """全文查找替换。"""
+        """全文查找替换；返回是否真的替换到内容。"""
+        if not isinstance(old, str) or not isinstance(new, str):
+            raise ValueError("replace_text 的 old/new 必须是字符串")
+        if not old:
+            raise ValueError("replace_text 的 old 不能为空字符串")
         self._push_undo()
+
+        def _cur_text(b):
+            if b.range is None:
+                return b.text
+            try:
+                return b.range.Text
+            except Exception:
+                return b.text
+
+        old_texts = {id(b): _cur_text(b) for b in self.blocks}
         f = self.doc.Content.Find
         f.ClearFormatting()
         f.Replacement.ClearFormatting()
@@ -294,9 +345,23 @@ class DocModel:
         # 注意：pywin32 动态分发下 Execute 的关键字参数不可靠，必须按位置传全部 11 个参数
         # (FindText, MatchCase, MatchWholeWord, MatchWildcards, MatchSoundsLike,
         #  MatchAllWordForms, Forward, Wrap, Format, ReplaceWith, Replace)
-        f.Execute(old, False, False, False, False, False, True, 1, False, new, 2)
+        replaced = f.Execute(old, False, False, False, False, False, True, 1, False, new, 2)
         self.rebuild_ranges()
-        return True
+        # 回写受影响块的 md：快照/恢复以 md 为准，不回写则 rollback 会把
+        # replace_text 的结果静默还原（代价是丢失 md 里的 ** 等 markdown
+        # 标记——换回保存 replace 的修改）
+        for b in self.blocks:
+            cur = _cur_text(b)
+            if old_texts.get(id(b)) != cur:
+                b.md = self._md_from_text(b, cur)
+        return bool(replaced)
+
+    @staticmethod
+    def _md_from_text(b, text):
+        if b.kind.startswith("heading") and len(b.kind) > 7:
+            lv = b.kind[7:]
+            return "#" * int(lv) + " " + text
+        return text
 
     def undo(self, times=1):
         """撤销 Word 编辑栈中的最近操作（TypeText/Delete/InsertAfter 都在栈里）。
@@ -330,6 +395,20 @@ class DocModel:
         md = spec.get("md")
         if not isinstance(md, str):
             raise ValueError(f"操作 {op!r} 需要字符串 md 字段")
+        return md
+
+    @staticmethod
+    def _require_md_str(md, op):
+        """命令式原语的 md 校验：非字符串或空白一律拒绝。
+
+        空 md 的 write_block 返回 []：replace 会留下孤儿空段落且块索引
+        错位、insert 留下孤儿段落——都是静默的数据损坏，不如明确报错
+        让 AI 的自我修复路径纠正。
+        """
+        if not isinstance(md, str):
+            raise ValueError(f"{op} 需要 markdown 字符串")
+        if not md.strip():
+            raise ValueError(f"{op} 的内容不能为空")
         return md
 
     def preview_edit(self, spec):
@@ -396,6 +475,7 @@ class DocModel:
 
     def select_block(self, i):
         """滚动到第 i 块并闪烁高亮（纯可视化用）。"""
+        self._require_index(i)
         b = self.blocks[i]
         self._flash(b.range)
         return True
@@ -474,10 +554,12 @@ class DocModel:
                  "text": b.text, "n_paras": b.n_paras} for b in self.blocks]
         payload = json.dumps(data, ensure_ascii=False)
         n = max(1, (len(payload) + _PROP_CHUNK - 1) // _PROP_CHUNK)
-        self._set_doc_variable(BLOCKS_PROP, str(n))
+        # 先写全部分片，最后写计数：计数是「提交标志」，先写计数时中途
+        # COM 瞬断会留下计数与分片不一致（load_blocks 整档判废）
         for k in range(n):
             self._set_doc_variable(f"{BLOCKS_PROP}_{k}",
                                       payload[k * _PROP_CHUNK:(k + 1) * _PROP_CHUNK])
+        self._set_doc_variable(BLOCKS_PROP, str(n))
         # 本次块数变少时，清理残留的编号更大的旧分片
         k = n
         while self._clear_doc_variable(f"{BLOCKS_PROP}_{k}"):
@@ -535,16 +617,26 @@ class DocModel:
         for d in data:
             if not isinstance(d, dict):
                 continue
+            n_paras = d.get("n_paras", 1)
+            # 损坏存档（手改 / 同步冲突）的 n_paras 可能不是正整数：
+            # rebuild_ranges 的 min(b.n_paras, total-idx) 会抛 TypeError，
+            # 此时不能污染 self.blocks（CLI 启动路径无 try/except）
+            if not isinstance(n_paras, int) or isinstance(n_paras, bool) or n_paras <= 0:
+                return 0
             blocks.append(Block(d.get("kind", "paragraph"), d.get("level", 0),
                                 d.get("md", ""), d.get("text", ""),
-                                None, d.get("n_paras", 1)))
+                                None, n_paras))
         if not blocks:
             return 0
         self.blocks = blocks
-        self.rebuild_ranges()
-        # 存档与现状不一致（别的会话里改过文档）时按相似度重对齐
-        if self.alignment_warning:
-            self.realign_blocks()
+        try:
+            self.rebuild_ranges()
+            # 存档与现状不一致（别的会话里改过文档）时按相似度重对齐
+            if self.alignment_warning:
+                self.realign_blocks()
+        except Exception:
+            self.blocks = []  # 重建失败：失效存档，交给调用方走 import_document
+            return 0
         return len(self.blocks)
 
     # ---------- 首次接入已有文档：把现成段落登记为块 ----------
@@ -686,6 +778,8 @@ class DocModel:
 
         model_undo / 事务回滚用它。注意：快照恢复会丢弃用户在 AI 块之外
         手动做的格式调整——这是"结构一致"与"保留一切手动痕迹"之间的取舍。
+        任一块重写失败（COM 瞬断等）会抛 RuntimeError——文档已清空、按
+        逐块写入到底写了多少是不确定状态，不能静默报「已回滚成功」。
         """
         if self.writer is None:
             raise RuntimeError("没有可用的写入器，无法恢复快照")
@@ -703,6 +797,7 @@ class DocModel:
         w.pending = ""
         w._draft = None
         w._first_block = True
+        failed = 0
         for idx, item in enumerate(snap):
             if idx > 0:
                 try:
@@ -713,8 +808,17 @@ class DocModel:
                     pass
             try:
                 w.write_block(item.get("md", ""), animate=False)
-            except Exception:
-                pass
+            except Exception as e:
+                # 不吞：调用方/engine 会把失败报给用户；数一下好给出定位信息
+                failed += 1
+                last_err = e
+        if failed:
+            self.alignment_warning = None
+            self.rebuild_ranges()
+            raise RuntimeError(
+                f"恢复快照时 {failed}/{len(snap)} 个块写入失败"
+                f"（最后错误：{last_err}），文档可能不完整")
+        self.alignment_warning = None  # 全新对齐，旧的漂移警告作废
         self.rebuild_ranges()
         return len(self.blocks)
 
@@ -768,15 +872,31 @@ class DocModel:
         self._txn_snap = None
         return True
 
+    def is_txn_active(self):
+        """事务是否进行中（engine 在编辑失败时据此主动回滚卡住的事务）。"""
+        return self._txn_active
+
     def rollback_txn(self):
         """回滚事务：文档与块模型恢复到事务开始前。"""
         if not self._txn_active:
             raise RuntimeError("没有进行中的事务")
         snap = self._txn_snap
+        # 先复位标志再恢复：restore_snapshot 现在会把失败抛出来，
+        # 此处不能因为恢复失败就把 _txn_active 卡在 True
+        # （之后所有编辑都不入快照栈、再次 begin_txn 也会报错）
         self._txn_active = False
         self._suppress_push = False
         self._txn_snap = None
-        self.restore_snapshot(snap)
+        try:
+            self.restore_snapshot(snap)
+        except Exception:
+            # 文档可能停在半写状态：快照已丢，至少把块模型重建到现状
+            try:
+                self.rebuild_ranges()
+                self.refresh_texts()
+            except Exception:
+                pass
+            raise
         return True
 
     # ---------- 长文档布局：目录 / 页眉页脚 / 分页 ----------

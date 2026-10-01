@@ -38,7 +38,17 @@ class Tray(QSystemTrayIcon):
     def _toggle_autostart(self, on):
         from app.auto_start import disable, enable
         if on:
-            enable()
+            ok = enable()
+            if not ok:
+                # 注册表写入被拦截时回退菜单项状态，避免「勾上了但实际没生效」
+                from PySide6.QtWidgets import QMessageBox
+                self.act_autostart.blockSignals(True)
+                self.act_autostart.setChecked(False)
+                self.act_autostart.blockSignals(False)
+                QMessageBox.warning(None, "开机自启",
+                                    "写入注册表失败（可能被杀毒软件或组策略拦截），"
+                                    "开机自启未能生效。")
+                return
         else:
             disable()
         self.settings.set("auto_start", bool(on))
@@ -53,5 +63,7 @@ class Tray(QSystemTrayIcon):
                              QSystemTrayIcon.Information, 4000)
 
     def _quit(self):
+        # 先隐藏托盘图标再退出，避免强杀路径下留下残影
+        self.hide()
         self.window._unregister_hotkey()
         QApplication.quit()

@@ -93,10 +93,21 @@ class InputEdit(QTextEdit):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setPlaceholderText("写点什么… 例如：写一篇关于秋天的散文")
+        self._composing = False
+
+    def inputMethodEvent(self, event):
+        # 记录 IME 组合态：组合未提交时按 Enter 是「确认候选词」，
+        # 不能让它冒泡成发送（依赖具体输入法是否消费该 Enter，此处主动防御）
+        try:
+            self._composing = bool(event.preeditString())
+        except Exception:
+            self._composing = False
+        super().inputMethodEvent(event)
 
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key_Return, Qt.Key_Enter) and \
-                not (event.modifiers() & Qt.ShiftModifier):
+                not (event.modifiers() & Qt.ShiftModifier) and \
+                not self._composing:
             self._on_send()
             return
         super().keyPressEvent(event)
@@ -158,6 +169,10 @@ class MainWindow(QWidget):
         self._apply_palette()
         if was_visible:
             self.show()
+        else:
+            # 隐藏态下设完 flags 不走 showEvent，但窗口句柄已重建，
+            # 必须立刻在新 HWND 上注册热键，否则最小化到托盘期间失联
+            self._register_hotkey()
 
     def _place_initial(self):
         geo = self.settings.get("geometry")
@@ -296,6 +311,9 @@ class MainWindow(QWidget):
 
     def summon(self):
         """从托盘召回：显示并闪一下。"""
+        # 召回前校验几何：隐藏期间外接显示器拔掉后，Windows 不会迁移
+        # 隐藏窗口，直接 show 会落在失效坐标上（窗口不可见且无法找回）
+        self.setGeometry(self._clamp_to_screen(self.geometry()))
         if not self.isVisible():
             self.show()
         self.raise_()
@@ -329,6 +347,7 @@ class MainWindow(QWidget):
         self.avatar_c.drag_window = self
         self.input_c = QLineEdit(self._compact)
         self.input_c.setPlaceholderText("写点什么，或告诉我如何排版…")
+        self.input_c.setMaxLength(self.MAX_PROMPT_CHARS)
         self.input_c.returnPressed.connect(self._on_send_compact)
         self.btn_send_c = QPushButton(icon_send(), "", self._compact)
         self.btn_send_c.setObjectName("primary")
@@ -477,8 +496,7 @@ class MainWindow(QWidget):
         self.btn_review.setCheckable(True)
         self.btn_review.setFixedHeight(26)
         self.btn_review.setFixedWidth(46)
-        self.btn_review.toggled.connect(
-            lambda on: self.worker.send("review", bool(on)))
+        self.btn_review.toggled.connect(self._on_review)
         blay.addWidget(self.btn_review)
         self.preset_combo = QComboBox(toolbar)
         self.preset_combo.addItems(["套用预设…"] + list(preset_list()))
@@ -496,7 +514,7 @@ class MainWindow(QWidget):
         self.btn_save.setObjectName("tool")
         self.btn_save.setFixedHeight(26)
         self.btn_save.setFixedWidth(64)
-        self.btn_save.clicked.connect(lambda: self.worker.send("save"))
+        self.btn_save.clicked.connect(self._on_save)
         blay.addWidget(self.btn_save)
 
         # 输入行
@@ -594,13 +612,43 @@ class MainWindow(QWidget):
         self._write_mode = (idx == 0)
         self._set_input_placeholder()
 
+    def _on_review(self, on):
+        """修订开关：生成中拒绝并回退按钮状态。
+
+        放进命令队列的话会在本次生成结束后才执行、且执行时已不 busy——
+        用户几分钟前点了一下、此时突然「已开启修订模式」毫无道理。
+        """
+        if self._busy:
+            self.messages.add("info", "生成中不能切换修订模式，请先中断当前生成。")
+            self.btn_review.blockSignals(True)
+            self.btn_review.setChecked(not on)
+            self.btn_review.blockSignals(False)
+            return
+        self.worker.send("review", bool(on))
+
+    def _on_save(self):
+        """存档按钮：生成中给出的只是中间快照且会被延迟，不如明确拒绝。"""
+        if self._busy:
+            self.messages.add("info", "正在生成，请先中断再存档。")
+            return
+        self.worker.send("save")
+
     def _on_speed(self, idx):
         mode = ("slow", "auto", "fast")[idx]
         self.settings.set("speed", mode)
-        self.worker.send("speed", mode)
+        self.settings.save()
+        # 直接设置而非走命令队列：worker 处理 write 期间不消费队列，
+        # 排队等生成结束才执行就完全没有实时效果
+        self.worker.set_speed(mode)
 
     def _on_preset(self, idx):
         if idx <= 0:
+            return
+        if self._busy:
+            # 生成中套预设会和写入器的样式设置互相打架；不放队列延迟执行
+            # （延迟执行会让用户在 minutes 后看到莫名其妙的「已应用」）
+            self.messages.add("info", "生成中不能套用预设，请先中断当前生成。")
+            self.preset_combo.setCurrentIndex(0)
             return
         name = self.preset_combo.itemText(idx)
         self.worker.send("preset", name)
@@ -626,11 +674,21 @@ class MainWindow(QWidget):
         text = self.input_p.toPlainText().strip()
         self._send(text)
 
+    MAX_PROMPT_CHARS = 20000
+
     def _send(self, text):
         if not text:
             return
+        if len(text) > self.MAX_PROMPT_CHARS:
+            self.messages.add("info", f"输入超过 {self.MAX_PROMPT_CHARS} 字上限，"
+                              "请缩减后再发送。")
+            return
         if self._awaiting_choice and not self._extra_mode:
-            self.messages.add("info", "请先选择 回滚 / 保留 / 追加补充。")
+            if self._expanded:
+                self.messages.add("info", "请先选择 回滚 / 保留 / 追加补充。")
+            else:
+                # 紧凑态看不到选择条：引导用户展开
+                self.messages.add("info", "请先展开悬浮窗，选择 回滚 / 保留 / 追加补充。")
             return
         if self._extra_mode:
             self._extra_mode = False
@@ -642,6 +700,10 @@ class MainWindow(QWidget):
             self.worker.send("write", text)
         else:
             self.worker.send("arrange", text)
+        # 乐观置 busy：stateChanged 信号跨线程回来有几十毫秒延迟，
+        # 这期间第二次 Enter 会被 worker 拒收「正在处理」但输入已被清空
+        # （文本丢失）；本地先锁住，第二条 Enter 就走「中断」逻辑且文本保留
+        self._busy = True
         self.input_c.clear()
         self.input_p.clear()
 
@@ -650,6 +712,9 @@ class MainWindow(QWidget):
         self._extra_mode = False
         self._choice_bar.setVisible(True)
         self._set_input_placeholder()
+        # 选项条只在展开面板里有：中断后自动展开，确保用户看得见选择入口
+        if not self._expanded:
+            self._apply_expanded(True)
 
     def _choose(self, value):
         self._awaiting_choice = False
@@ -660,9 +725,16 @@ class MainWindow(QWidget):
 
     def _enter_extra_mode(self):
         self._extra_mode = True
-        self._choice_bar.setVisible(False)
+        # 不隐藏选择条：追加模式是「还能改主意」的状态，用户随时可以
+        # 放弃输入直接点 回滚/保留（此前隐藏选择条 = 唯一退路是干等 5 分钟）
         self._set_input_placeholder()
         self.input_p.setFocus()
+
+    def _exit_extra_mode(self):
+        """追加模式打消：回到选择条等待。Esc 优先走这里而不是直接收起窗口。"""
+        if self._extra_mode:
+            self._extra_mode = False
+            self._set_input_placeholder()
 
     # ---------- 窗口行为 ----------
 
@@ -724,7 +796,11 @@ class MainWindow(QWidget):
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
-            if self._expanded:
+            if self._extra_mode:
+                # 优先退出追加模式、回到选择条（否则它是死路：
+                # 只能发字或干等 worker 5 分钟超时）
+                self._exit_extra_mode()
+            elif self._expanded:
                 self._apply_expanded(False)
             else:
                 self.hide()
@@ -774,6 +850,15 @@ class MainWindow(QWidget):
             self._hotkey = bool(ok)
         except Exception:
             self._hotkey = False
+        if not self._hotkey and not getattr(self, "_hotkey_hinted", False):
+            # 热键被别的程序占用（放大镜、其它工具）时不能静默：
+            # 用户按 Ctrl+Alt+Space 毫无反应却不知道为什么
+            self._hotkey_hinted = True
+            try:
+                self.messages.add("info", "Ctrl+Alt+Space 召唤热键注册失败："
+                                  "可能被其它程序占用。可双击托盘图标召回。")
+            except Exception:
+                pass
 
     def _unregister_hotkey(self):
         if self._hotkey:

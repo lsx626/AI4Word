@@ -39,6 +39,18 @@ def get_word():
     return app
 
 
+def get_word_attach():
+    """只附加到已运行的 Word；没运行返回 None（不启动新进程）。
+
+    「块地图」这类查看类命令用：用户只想看看文档结构，贸然启动一个
+    Word 窗口是打扰。
+    """
+    try:
+        return win32com.client.GetObject(None, "Word.Application")
+    except Exception:
+        return None
+
+
 WRITER_SYSTEM = (
     "你是 AI4Word 的写作助手，负责把用户要求的内容写进 Word 文档。"
     "直接输出文档正文本身，使用 Markdown 格式（标题 / 列表 / 粗体 / 引用 / 表格等）。"
@@ -135,14 +147,25 @@ def gen_code(prompt, api_key, session=None, block_map_fn=None, sink=print, model
     return code
 
 
-def fix_code(prompt, failed_code, error_msg, api_key, session=None, sink=print, model=None):
-    """执行失败后，让 AI 根据错误信息重新生成一段不同思路的代码。"""
+def fix_code(prompt, failed_code, error_msg, api_key, session=None, sink=print,
+             block_map_fn=None, model=None):
+    """执行失败后，让 AI 根据错误信息重新生成一段不同思路的代码。
+
+    修正代码必须看到「当前」文档结构：失败的那轮可能已经改了一半文档，
+    按原始指令臆测索引会错上加错。
+    """
     from ai_client import ai_request
 
     memory = ""
     if session is not None:
         memory = session.memory_prompt()
-    memory_block = ("\n\n**会话记忆**（除非用户明确改变，请直接沿用）：\n" + memory) if memory else ""
+    memory_block = ("\n\n**会话记忆**（除非用户明确改变，请沿用，但可纠正）：\n" + memory) if memory else ""
+    structure = "(无法获取文档结构)"
+    if block_map_fn:
+        try:
+            structure = block_map_fn()
+        except Exception:
+            pass
     system_prompt = f"""
 你是顶级的 Python 调试专家，专精于 pywin32 的 Word 自动化。
 为了完成用户指令「{prompt}」，之前运行了如下代码：
@@ -150,6 +173,12 @@ def fix_code(prompt, failed_code, error_msg, api_key, session=None, sink=print, 
 {failed_code}
 --- END FAILED CODE ---
 但它失败了，错误信息：`{error_msg}`{memory_block}
+
+注意：失败的代码可能已经对文档应用了一部分修改。当前文档结构是：
+--- CURRENT BLOCK MAP ---
+{structure}
+--- END CURRENT BLOCK MAP ---
+请以这个结构为准定位索引，不要按旧结构臆测。
 
 你的任务：
 1. 分析失败原因。

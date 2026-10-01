@@ -62,6 +62,9 @@ def run_code(code, exec_globals, sink=print):
     statements = tree.body
     total = len(statements)
     app = exec_globals.get("word_app")
+    # 步数守卫全程共享一个计数器：否则每条语句各给 50000 步，
+    # 「总步数上限」就是空的（N 条语句 = N × 50000）
+    exec_globals["__guard_step"] = make_guard()
     for idx, (node, gnode) in enumerate(zip(statements, guarded.body), 1):
         src = ast.unparse(node)
         sink(f"[{idx}/{total}] {src}")
@@ -72,7 +75,6 @@ def run_code(code, exec_globals, sink=print):
             except Exception:
                 before = None
         try:
-            exec_globals["__guard_step"] = make_guard()
             exec(compile(ast.Module(body=[gnode], type_ignores=[]), "<ai>", "exec"),
                  exec_globals)
             sink("    [ok]")
@@ -81,6 +83,11 @@ def run_code(code, exec_globals, sink=print):
             return False, f"SandboxError: {e}"
         except Exception as e:
             sink(f"    [fail] {e}")
+            return False, f"{type(e).__name__}: {e}"
+        except BaseException as e:
+            # 必须兜住 BaseException：raise SystemExit 会穿过 except Exception，
+            # 在 GUI 里终结 worker 线程（命令队列再无人消费），在 CLI 里直接退进程
+            sink(f"    [fail] {type(e).__name__}: {e}")
             return False, f"{type(e).__name__}: {e}"
         # 可视化：该语句移动了选区 => 滚动到选区并闪烁
         if app is not None and before is not None:
