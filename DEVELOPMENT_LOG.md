@@ -454,6 +454,55 @@ V8.2 打包链路打通后，真机使用暴露了一批「能用但难用」的
   窗口 0% 透明像素、紧凑/展开/生成中/中断选择条各形态渲染正确；启动真实
   `ai4word.pyw` 进程存活复测通过。
 
+### V9.1: 三个真机反馈的修正（圆角锯齿 / 已有文档读取 / 写作废话）
+
+**1. 窗口边缘锯齿（V9.0 的 mask 盖掉了 Win11 原生圆角）**
+
+V9.0 用 QRegion mask 切圆角，在 Win11 上反而难看：mask 会**覆盖**系统
+合成器的原生圆角，留下像素级台阶。
+
+- 定位：实验对照发现 Win11（build ≥ 22000）默认就对顶层窗口做 DWM
+  抗锯齿圆角——只要不设 mask，角落就是平滑的。
+- 修复：`MainWindow._apply_window_shape()`——Win11 上清掉 mask，并调
+  `DwmSetWindowAttribute(DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND)`
+  显式固化圆角偏好；早于 Win11（无 DWM 圆角 API）才降级回 QRegion mask。
+  描边半径改为与 DWM 一致的 8px。形状在 showEvent 里按 HWND 重建
+  应用（setWindowFlags 会换 HWND）。
+
+**2. 无法读取已接入的非空 Word 文档**
+
+- 根因：接入 Word 后只调 `load_blocks()`——它从 `doc.Variables` 恢复
+  AI4Word 自己存下的块模型。用户**新打开**的已有文档没有存档变量，
+  于是块地图空、块编辑无从下手，程序对已有内容「失明」。
+- 修复：`DocModel.import_document(limit=600)`——无存档时逐段落扫描
+  `doc.Paragraphs` 登记为块：按 `Style.NameLocal` 匹配内建标题样式
+  （-2..-7，兼容中文「标题 1」与英文 "Heading 1"）识别 heading1-6，
+  其余为 paragraph；空段落也登记（保持与文档段落 1:1 对齐，
+  `rebuild_ranges` 不报漂移）；块 Range 与流式登记一致地**不含**末尾
+  段落标记（否则 replace_block 会吞掉段落分隔符——实测发现）。
+- 接线：GUI 引擎 `_ensure_ready` 与 CLI `main()` 在 `load_blocks` 返回 0
+  时调用，提示「已读取现有文档 N 个块」；块地图、replace/insert/delete
+  原语随即作用于已有文字。
+- 测试：fake 下 3 个用例（导入/空文档/导入后编辑）+ 真实 Word 验证
+  （`tests/import_real_word.py`，含中文标题样式识别与 replace_block）。
+
+**3. AI 的前言 / 修改方向讨论被写进文档**
+
+- 根因：写作阶段的系统提示词只有「用 Markdown 回复」，模型把需求当
+  对话，输出「好的，我来…需要确认…吗？」这类元话语——每个字都直接
+  流式写进了 Word。
+- 修复：`app/agent.py` 提取共享 `WRITER_SYSTEM`——明确「直接输出正文
+  本身，禁止前言/问候/确认/提问/思路说明/修改方向讨论/所需条件询问/
+  总结，因为每个字都会立即写入文档」；写作与追加补充（GUI 引擎两处、
+  CLI 一处）与 e2e 测试统一引用。真实 API 验证：输出纯正文无前言。
+
+**4. 验证**
+
+- 离线套件 **71 项全绿**（fake_word 38 / format_runner 8 / session 4 /
+  settings 6 / engine 4 / ui 10 / writer_anchor 5）。
+- 真实 Word 冒烟、引擎 × 真实 Word、真实 API 端到端全部通过；
+  真实 API 写作提示词检查无前言。
+
 ---
 ## 核心技术栈
 

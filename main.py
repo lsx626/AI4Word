@@ -17,7 +17,8 @@ import os
 from dotenv import load_dotenv
 
 from ai_client import ai_stream
-from app.agent import build_exec_globals, fix_code, gen_code, get_word
+from app.agent import (WRITER_SYSTEM, build_exec_globals, fix_code, gen_code,
+                       get_word)
 from doc_model import DocModel
 from format_runner import run_code
 from session import Session
@@ -67,11 +68,15 @@ def main():
     restored = model.load_blocks()  # 重开同一文档时恢复上次的块模型
     if restored:
         print(f"已从文档恢复 {restored} 个块（上次会话的块索引继续可用）。")
+    else:
+        imported = model.import_document()  # 首次接入没有存档的非空文档：读取现有内容
+        if imported:
+            print(f"已读取现有文档 {imported} 个块（现有内容的块索引可用）。")
 
     # --- 阶段一：流式生成 + 动画写入 ---
     prompt = input("请输入您的写作需求：")
     if prompt:
-        system_prompt = "你是一个乐于助人的助手，你总是使用 Markdown 格式进行回复。"
+        system_prompt = WRITER_SYSTEM
         print("\n正在流式生成并以动画效果写入 Word（按 ESC 可中断）...")
         writer.set_speed("auto")
         snap_before = model.snapshot()

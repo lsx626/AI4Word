@@ -17,7 +17,7 @@ import time
 import pythoncom
 from PySide6.QtCore import QThread, Signal
 
-from app.agent import build_exec_globals, fix_code, gen_code
+from app.agent import WRITER_SYSTEM, build_exec_globals, fix_code, gen_code
 from doc_model import DocModel
 from format_runner import run_code
 from session import Session
@@ -208,6 +208,12 @@ class AgentWorker(QThread):
             self.wordStatus.emit(f"已连接 · {name}")
             if restored:
                 self.message.emit("info", f"已从文档恢复 {restored} 个块索引。")
+            else:
+                # 首次接入没有任何存档的文档（例如用户新打开的非空文档）：
+                # 把现有内容读进块模型，块地图与编辑原语即可作用于已有文字
+                imported = self._import_if_nonempty(model)
+                if imported:
+                    self.message.emit("info", f"已读取现有文档 {imported} 个块。")
             self._emit_map()
         except Exception as e:
             self.message.emit("error", f"初始化 Word 环境失败：{e}")
@@ -235,6 +241,14 @@ class AgentWorker(QThread):
         except Exception:
             pass
 
+    def _import_if_nonempty(self, model):
+        """文档非空且无存档时，把现有段落登记为块；返回登记数。"""
+        try:
+            return model.import_document()
+        except Exception as e:
+            self.message.emit("error", f"读取现有文档失败：{e}")
+            return 0
+
     # ---------- 阶段一：流式写入 ----------
 
     def _cmd_write(self, prompt):
@@ -252,7 +266,7 @@ class AgentWorker(QThread):
         self._writer.reset_anchor()  # 新一波写入：锚点从当前光标重新捕获
 
         from ai_client import ai_stream
-        system = "你是一个乐于助人的助手，你总是使用 Markdown 格式进行回复。"
+        system = WRITER_SYSTEM  # 只允许输出正文，禁止任何前言/讨论/提问
         try:
             self._snap_before = self._model.snapshot()
         except Exception:
@@ -318,7 +332,7 @@ class AgentWorker(QThread):
                 self.message.emit("user", extra)
                 self.stateChanged.emit("writing")
                 from ai_client import ai_stream
-                system = "你是一个乐于助人的助手，你总是使用 Markdown 格式进行回复。"
+                system = WRITER_SYSTEM
                 self._writer.set_speed(self._speed)
                 self._writer.reset_anchor()
                 received = 0

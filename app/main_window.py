@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """悬浮窗主体：紧凑胶囊 ↔ 完整面板的双形态无边框窗口。
 
-- 无边框 + 置顶（可设置）；窗口按「不透明 + 圆角 mask」渲染——早期用
-  WA_TranslucentBackground 做透明合成，输入光标闪烁 / 头像 30fps 局部
-  更新会在部分显卡上把大片背景抖成透明（漏出桌面），改成不透明窗口
-  后所有局部更新都绝对安全。
+- 无边框 + 置顶（可设置）；不透明窗口（WA_TranslucentBackground 的分层
+  窗口在部分显卡上会被输入光标闪烁 / 头像 30fps 局部更新抖穿，露出桌面）。
+  圆角由系统合成器原生绘制：Win11 走 DWM 圆角（抗锯齿），早于 Win11
+  降级 QRegion mask——不要在 Win11 上用 mask，它会盖掉原生圆角留下锯齿。
 - 紧凑态：发光头像 + 输入框 + 发送/展开按钮
 - 展开态：消息流 / 工具条（档位·修订·预设·存档）/ 块地图侧栏 / 中断选择条
 - 头像与标题栏的空白条可拖动窗口，拖动中靠近屏幕边缘磁性吸附，松手再吸附一次
@@ -12,6 +12,7 @@
 """
 import ctypes
 import ctypes.wintypes as wt
+import sys
 
 from PySide6.QtCore import (QEasingCurve, QPropertyAnimation, QRect, QSize, Qt,
                             Signal)
@@ -38,8 +39,13 @@ EXPANDED_SIZE = QSize(492, 600)
 SNAP_MARGIN = 40          # 松手时离边缘多少像素内吸附
 SNAP_DRAG_MARGIN = 24     # 拖动中的磁性吸附半径（比松手小，避免拖动时黏得太死）
 SNAP_PAD = 8              # 吸附后与边缘保持的间距
-CORNER_RADIUS_COMPACT = 26
-CORNER_RADIUS_EXPANDED = 14
+CORNER_RADIUS = 8         # 描边半径：与 Win11 DWM 原生圆角一致
+
+# DWM 窗口圆角（Windows 11 build 22000+ 支持，原生抗锯齿）：
+# 33 = DWMWA_WINDOW_CORNER_PREFERENCE，2 = DWMWCP_ROUND
+_DWMWA_WINDOW_CORNER_PREFERENCE = 33
+_DWMWCP_ROUND = 2
+_DWM_TRY_BUILD = 22000   # 支持 DWM 圆角的最低 Windows 11 内部版本
 
 
 class DragStrip(QWidget):
@@ -189,8 +195,7 @@ class MainWindow(QWidget):
 
     def _rounded_path(self, rect):
         path = QPainterPath()
-        r = CORNER_RADIUS_COMPACT if not self._expanded else CORNER_RADIUS_EXPANDED
-        path.addRoundedRect(rect, r, r)
+        path.addRoundedRect(rect, CORNER_RADIUS, CORNER_RADIUS)
         return path
 
     def drag_to(self, global_pos, offset):
@@ -267,7 +272,7 @@ class MainWindow(QWidget):
 
         if instant:
             self.setGeometry(target)
-            self._apply_mask()
+            self._apply_window_shape()
         else:
             anim = QPropertyAnimation(self, b"geometry", self)
             anim.setDuration(190)
@@ -670,7 +675,7 @@ class MainWindow(QWidget):
         grad.setColorAt(1.0, QColor("#16181f"))
         p.setBrush(grad)
         p.setPen(Qt.NoPen)
-        p.drawRect(rect)  # 不透明：整幅铺满，圆角由 mask 切出
+        p.drawRect(rect)  # 不透明：整幅铺满；圆角形状由系统/DWM 切出
         p.setBrush(Qt.NoBrush)
         border = AMBER if self._busy else QColor(INK_4)
         p.setPen(QPen(border, 1.3))
@@ -678,13 +683,44 @@ class MainWindow(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._apply_mask()
+        # 无需重设形状：DWM 圆角跟窗口尺寸走；Win10 降级的 mask 跟着重建
+        self._apply_window_shape()
 
-    def _apply_mask(self):
-        """圆角形状：mask 切掉的角落不接收点击、露出桌面。不透明窗口的
-        mask 是经典 shaped-window 做法，与半透明合成无关，绝无抖动伪影。"""
+    def _apply_window_shape(self):
+        """窗口形状策略：
+
+        Win11（build ≥ 22000）：交给 DWM 合成器画原生抗锯齿圆角，
+        清掉 mask。QRegion mask 在 Win11 上会覆盖原生圆角，边缘是
+        像素级锯齿——V9.0 的锯齿 complaints 就是它造成的。
+        老系统：DwmSetWindowAttribute 不可用，降级 QRegion mask
+        保住圆角形状（有锯齿但形状正确）。
+        """
+        hwnd = int(self.winId())
+        if hwnd != 0 and self._try_dwm_round(hwnd):
+            if not self.mask().isEmpty():
+                self.clearMask()
+            self._shape_winid = hwnd
+            return
         r = self._rounded_path(self.rect().adjusted(1, 1, -1, -1))
         self.setMask(QRegion(r.toFillPolygon().toPolygon()))
+        self._shape_winid = hwnd
+
+    def _try_dwm_round(self, hwnd):
+        """在 Win11 上把窗口圆角偏好设为 DWMWCP_ROUND；不支持则返回 False。"""
+        try:
+            build = sys.getwindowsversion().build
+        except Exception:
+            build = 0
+        if build < _DWM_TRY_BUILD:
+            return False
+        try:
+            pref = ctypes.c_int(_DWMWCP_ROUND)
+            ok = ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                ctypes.c_void_p(hwnd), _DWMWA_WINDOW_CORNER_PREFERENCE,
+                ctypes.byref(pref), ctypes.sizeof(pref))
+            return ok == 0  # S_OK
+        except Exception:
+            return False
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
@@ -751,7 +787,10 @@ class MainWindow(QWidget):
         super().showEvent(event)
         if not self._hotkey:
             self._register_hotkey()
-        self._apply_mask()
+        # HWND 可能重建（setWindowFlags / 首次 show），形状要重新应用
+        hwnd = int(self.winId())
+        if hwnd != 0 and hwnd != getattr(self, "_shape_winid", 0):
+            self._apply_window_shape()
 
     def hideEvent(self, event):
         super().hideEvent(event)

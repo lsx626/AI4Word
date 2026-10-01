@@ -55,8 +55,9 @@ def main_flow():
     main._model = model  # gen_code 读取结构地图用的全局模型
 
     # --- 阶段一：真实 SSE 流式生成 + 动画写入 ---
+    from app.agent import WRITER_SYSTEM
     prompt = "写一首关于秋天的小诗：一个一级标题，下面两个段落，第二个段落里要有粗体。"
-    system_prompt = "你是一个乐于助人的助手，你总是使用 Markdown 格式进行回复。"
+    system_prompt = WRITER_SYSTEM
     print("\n正在请求 Atria 流式生成...")
     received = 0
     for piece in ai_client.ai_stream(prompt, api_key, system_prompt):

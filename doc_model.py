@@ -547,6 +547,81 @@ class DocModel:
             self.realign_blocks()
         return len(self.blocks)
 
+    # ---------- 首次接入已有文档：把现成段落登记为块 ----------
+
+    def import_document(self, limit=600):
+        """把当前文档的现有内容登记为块模型（读取已存在的非空文档）。
+
+        新打开的非空文档没有 AI4Word 存档（load_blocks 返回 0）时调用：
+        逐段落登记——标题样式识别为 heading1-3，其余为 paragraph；
+        空段落同样登记（保持块模型与文档段落数 1:1 对齐，rebuild_ranges
+        不会报漂移）。之后块地图、replace_block / insert_after / delete_block
+        等原语即可直接作用于已有内容。
+        """
+        self.blocks = []
+        try:
+            paras = self.doc.Paragraphs
+            total = paras.Count
+        except Exception:
+            return 0
+        if total <= 1 and self._doc_is_empty():
+            return 0
+        # 内建标题样式的本地名（中文 Word 是「标题 1」，英文是「Heading 1」）
+        heading_names = {}
+        for sid, level in ((-2, 1), (-3, 2), (-4, 3), (-5, 4), (-6, 5), (-7, 6)):
+            try:
+                name = str(self.doc.Styles(sid).NameLocal).strip().lower()
+                if name:
+                    heading_names[name] = level
+            except Exception:
+                pass
+        n = 0
+        for i in range(1, min(total, limit) + 1):
+            try:
+                rng = paras(i).Range
+            except Exception:
+                continue
+            text = ""
+            try:
+                text = str(rng.Text or "")
+            except Exception:
+                pass
+            raw = text.rstrip("\r\n\x07 \t　")
+            kind = "paragraph"
+            level = 0
+            try:
+                lname = str(rng.Style.NameLocal or "").strip().lower()
+                lv = heading_names.get(lname)
+                if lv is not None:
+                    kind = f"heading{lv}"
+                    level = lv
+            except Exception:
+                pass
+            # 与流式块登记 / rebuild_ranges 一致：Range 不含末尾段落标记，
+            # 否则 replace_block 删块时会连带吞掉段落分隔符
+            start = rng.Start
+            end = max(rng.End - 1, start)
+            try:
+                block_range = self.doc.Range(start, end)
+            except Exception:
+                block_range = rng
+            try:
+                self.register(kind, level, raw, raw, block_range, 1)
+                n += 1
+            except Exception:
+                continue
+        self.alignment_warning = None
+        if total > limit:
+            self.alignment_warning = f"文档较长（{total} 段），仅登记前 {limit} 段"
+        return n
+
+    def _doc_is_empty(self):
+        """文档是否没有任何可见内容（只有段落标记）。"""
+        try:
+            return not (self.doc.Content.Text or "").strip("\r\n\x07 \t　")
+        except Exception:
+            return True
+
     # ---------- 漂移后的模糊重对齐（用户手改文档，段落数已变） ----------
 
     def realign_blocks(self):

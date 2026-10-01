@@ -136,10 +136,21 @@ class FakeStyleParagraphFormat:
 class FakeStyle:
     """一个样式定义：Font / ParagraphFormat 均可读写。"""
 
+    # 内建样式的本地名（真实 Word 中文为「标题 1」，英文为 "Heading 1"）
+    _NAME_LOCAL = {
+        -1: "Normal", 1: "Normal",
+        -2: "Heading 1", -3: "Heading 2", -4: "Heading 3",
+        -5: "Heading 4", -6: "Heading 5", -7: "Heading 6",
+    }
+
     def __init__(self, sid):
         self.sid = sid
         self._font = FakeStyleFont()
         self._pf = FakeStyleParagraphFormat()
+
+    @property
+    def NameLocal(self):
+        return self._NAME_LOCAL.get(self.sid, "Normal")
 
     @property
     def Font(self):
@@ -341,7 +352,18 @@ class FakeRange:
 
     @property
     def Style(self):
-        return self._style
+        """区间样式：优先自身的赋值，否则按写入时的样式记录查找。
+
+        _set_style 在段落起点（折叠选区）上记录样式，随后文字在该位置
+        打出；记录坐标就是最终坐标，所以「起点落在区间内」即可匹配。
+        import_document 依赖这个路径读出标题样式。
+        """
+        if self._style is not None:
+            return self._style
+        for (s, e, st) in reversed(self._doc._styles):
+            if self.start <= s < self.end:
+                return st
+        return None
 
     @Style.setter
     def Style(self, value):
@@ -1298,6 +1320,56 @@ def test_block_md_slice():
         [b.md for b in model.blocks]
     assert_aligned(model, app)
     print("ok: 块 md 切片（各块登记自己原始 markdown）")
+
+
+def test_import_document_existing():
+    """首次接入没有存档的非空文档：import_document 把现有段落登记为块。"""
+    from doc_model import DocModel
+    app, writer, model = make()
+    # 造一个「用户早已写好」的文档：正文两段 + 一个一级标题
+    writer.write_block("已有第一段正文\n\n已有第二段正文\n\n# 已有标题", animate=False)
+
+    # 模拟一个全新的会话（没有 AI4Word 存档）
+    writer2 = StreamingWriter(app, app.doc, app.sel, model=None)
+    model2 = DocModel(app, app.doc, app.sel, writer2)
+    writer2.model = model2
+    assert model2.load_blocks() == 0  # 无存档
+    n = model2.import_document()
+    assert n == 3, f"应登记 3 段: {n}"
+    kinds = [b.kind for b in model2.blocks]
+    assert kinds == ["paragraph", "paragraph", "heading1"], kinds
+    texts = [b.text.replace("\r", "") for b in model2.blocks]
+    assert texts == ["已有第一段正文", "已有第二段正文", "已有标题"], texts
+    # 段落对齐完好（登记覆盖全部段落，rebuild_ranges 不该报警）
+    assert model2.alignment_warning is None, model2.alignment_warning
+    assert_aligned(model2, app)
+    # block_map 能把已有内容暴露给 AI
+    bm = model2.block_map()
+    assert "[0] paragraph: 已有第一段正文" in bm, bm
+    assert "[2] heading1: 已有标题" in bm, bm
+    print("ok: import_document 读取已有非空文档（正文+标题识别、段落对齐）")
+
+
+def test_import_document_empty():
+    """空文档（只有段落标记）import 应返回 0。"""
+    app, writer, model = make()
+    assert model.import_document() == 0
+    assert model.blocks == []
+    print("ok: import_document 空文档不登记")
+
+
+def test_import_then_edit():
+    """接入已有文档后，块编辑原语能作用于导入的块。"""
+    from doc_model import DocModel
+    app, writer, model = make()
+    writer.write_block("旧内容甲\n\n旧内容乙", animate=False)
+    model2 = DocModel(app, app.doc, app.sel, writer)
+    writer.model = model2
+    assert model2.import_document() == 2
+    model2.replace_block(0, "新内容甲")
+    assert app.doc.content == "新内容甲\r旧内容乙\r", app.doc.content
+    assert_aligned(model2, app)
+    print("ok: 导入后块编辑（replace_block 作用于导入块）")
 
 
 if __name__ == "__main__":
