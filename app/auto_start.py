@@ -3,6 +3,8 @@
 import os
 import sys
 
+from app import debug
+
 try:
     import winreg
 except ImportError:  # 非 Windows：安全降级
@@ -40,8 +42,10 @@ def enable():
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
             winreg.SetValueEx(k, VALUE_NAME, 0, winreg.REG_SZ, launcher_path())
+        debug.log("autostart_enabled", path=launcher_path())
         return True
-    except OSError:
+    except OSError as e:
+        debug.warn("autostart_enable_failed", error=str(e)[:200])
         return False
 
 
@@ -51,6 +55,7 @@ def disable():
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
             winreg.DeleteValue(k, VALUE_NAME)
-    except OSError:
-        pass
+        debug.log("autostart_disabled")
+    except OSError as e:
+        debug.warn("autostart_disable_failed", error=str(e)[:200])
     return True

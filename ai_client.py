@@ -9,8 +9,11 @@ Atria 是 Intern AI（discovery 平台，https://discovery.intern-ai.org.cn/）�
 """
 import json
 import os
+import time
 
 import requests
+
+from app import debug
 
 DEFAULT_API_URL = "https://discovery-api.intern-ai.org.cn/v1/chat/completions"
 API_URL = DEFAULT_API_URL
@@ -57,9 +60,21 @@ def ai_request(prompt, api_key, system_prompt, model=DEFAULT_MODEL, timeout=180)
             {"role": "user", "content": prompt},
         ],
     }
-    resp = requests.post(API_URL, headers=headers, json=data, timeout=timeout)
-    resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"]
+    t0 = time.time()
+    try:
+        resp = requests.post(API_URL, headers=headers, json=data, timeout=timeout)
+        resp.raise_for_status()
+        content = resp.json()["choices"][0]["message"]["content"]
+    except Exception:
+        debug.exc("api_request_failed", url=API_URL, model=data["model"],
+                  prompt_chars=len(prompt), has_key=bool(api_key),
+                  elapsed=round(time.time() - t0, 2))
+        raise
+    debug.log("api_request_ok", url=API_URL, model=data["model"],
+              prompt_chars=len(prompt), sys_prompt_chars=len(system_prompt),
+              has_key=bool(api_key), elapsed=round(time.time() - t0, 2),
+              chars=len(content), prompt=prompt, code=content, full=True)
+    return content
 
 
 def ai_stream(prompt, api_key, system_prompt, model=DEFAULT_MODEL, connect=10, read=600):
@@ -77,27 +92,38 @@ def ai_stream(prompt, api_key, system_prompt, model=DEFAULT_MODEL, connect=10, r
             {"role": "user", "content": prompt},
         ],
     }
-    with requests.post(
-        API_URL, headers=headers, json=data, stream=True, timeout=(connect, read)
-    ) as resp:
-        resp.raise_for_status()
-        for raw in resp.iter_lines(decode_unicode=True):
-            if not raw:
-                continue
-            line = raw.strip()
-            if not line.startswith("data:"):
-                continue
-            payload = line[len("data:"):].strip()
-            if payload == "[DONE]":
-                return
-            try:
-                chunk = json.loads(payload)
-            except json.JSONDecodeError:
-                continue
-            choices = chunk.get("choices") or []
-            if not choices:
-                continue
-            delta = choices[0].get("delta") or {}
-            piece = delta.get("content")
-            if piece:
-                yield piece
+    t0 = time.time()
+    received = 0
+    try:
+        with requests.post(
+            API_URL, headers=headers, json=data, stream=True, timeout=(connect, read)
+        ) as resp:
+            resp.raise_for_status()
+            for raw in resp.iter_lines(decode_unicode=True):
+                if not raw:
+                    continue
+                line = raw.strip()
+                if not line.startswith("data:"):
+                    continue
+                payload = line[len("data:"):].strip()
+                if payload == "[DONE]":
+                    return
+                try:
+                    chunk = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+                choices = chunk.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+                piece = delta.get("content")
+                if piece:
+                    received += len(piece)
+                    yield piece
+    except Exception:
+        debug.exc("api_stream_failed", url=API_URL, model=data["model"],
+                  received=received, elapsed=round(time.time() - t0, 2))
+        raise
+    finally:
+        debug.log("api_stream_done", url=API_URL, model=data["model"],
+                  received=received, elapsed=round(time.time() - t0, 2))

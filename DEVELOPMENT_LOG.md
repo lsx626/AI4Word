@@ -577,7 +577,77 @@ V9.0 用 QRegion mask 切圆角，在 Win11 上反而难看：mask 会**覆盖**
 - 真实 Word 冒烟、引擎 × 真实 Word、真实 API 端到端全部通过；
   真实 API 写作提示词检查无前言。
 
+
+### V9.3: 隐藏调试模式 + 全功能实测
+
+**调试模式（完全隐藏，零界面改动）**
+
+- 触发方式（任一即可）：
+  - 命令行参数：`AI4Word.exe -debug` / `python ai4word.pyw -debug` / `python -m app -debug`
+  - 程序名后缀含 `-debug`：如 `AI4Word-debug.exe`、`ai4word-debug.pyw`（只看 basename，`D:\xxx-debug\x\AI4Word.exe` 不会误报）
+- 日志位置：`%APPDATA%\AI4Word\debug.log`（回退链与 `settings.py` 一致：APPDATA → 用户主目录 → TEMP）
+- 行格式：`2026-10-04 10:23:45.123 [MainThread] INFO 事件名 key=value …`；追加写，`threading.Lock` 保证 GUI 线程与 worker 线程交错安全；超 5MB 滚动为 `debug.log.bak`（只留 1 个备份）；每次 `init()` 写运行头（时间、版本、是否打包、argv、Python/exe 路径、Windows build、日志路径）
+- 敏感字段（字段名含 api_key/key/token）自动打码为 `sk-…abcd`；流式正文只记计数与 200 字预览；用户提示词与 AI 生成的排版代码记全文；普通字段超 300 字符截断（`full=True` 不截）
+- 装有 `sys.excepthook` 与 `threading.excepthook`：未捕获异常先写 debug.log 再走原钩子（与 `ai4word.pyw` 的 crash.log 兼容，不冲突）
+- **非调试模式零副作用**：`is_debug()` 为 False 时 `log/warn/error/exc` 直接返回，不建文件、不格式化字符串、不装钩子（对照组实测验证：全功能操作一遍后无任何日志文件生成）
+- 接线覆盖：启动/退出、GUI 全部按钮与状态流转（展开收起、头像、两处发送、中断、回滚/保留/追加、速度三档、写作/排版切换、修订开关、预设、存档、块地图、设置对话框、拖动吸附、summon、热键、Esc 隐藏）、后台引擎（写作流/中断三选择/排版 gen_code→run_code→自我修复/预设/存档/块地图/Word 连接与重绑定）、CLI/GUI 共享核心（`ai_client` / `streaming_writer` / `doc_model` / `format_runner`）、托盘、设置对话框、自启、settings 异常路径
+
+**测试发现并修复的真实 bug**
+
+1. **QPen 类型错误**（`app/main_window.py` 紧凑模式边框）：`QPen(AMBER, 1.3)` 直接传字符串色值（`AMBER = "#f2a93b"`），PySide6 无此重载，paintEvent 每帧抛 TypeError。改为 `border = AMBER if self._busy else INK_4` + `QPen(QColor(border), 1.3)`。
+2. **中断等待期「追加补充」被拦截**：`_on_send_compact` / `_on_send_panel` 的 `if self._busy: interrupt(); return` 把中断等待选择期间的「追加补充」也一并拦掉了（用户无法追加，只能三选一）。改为 `if self._busy and not self._extra_mode:`。
+
+**测试中发现的机制（harness / 环境层面，非 app bug）**
+
+- 主线程直接读 Word COM 文档文本会抛 RPC_E_WRONG_THREAD；测试 harness 改为投递合成命令 `_sync_doc_text` 由 worker 线程读取，且 worker 端先写 text 再写 rsp（rsp 是释放标志，先写会读到陈旧 None）
+- worker 阻塞在中断选择队列（`_wait_choice`）时不服务命令队列，此时跨线程读取会超时返回 None
+- 解释器关闭时，主线程（从未 CoInitialize）释放 worker 线程持有的 COM 对象触发 0xC0000409（STATUS_STACK_BUFFER_OVERRUN）原生崩溃；退出流程必须先在 worker 线程内关闭文档/Word 并清理引用
+- 排版自我修复链路走 `fix_code`（内部直接再问 AI），不会二次调用 `gen_code`
+- 输入框 `setMaxLength(MAX_PROMPT_CHARS)` 会静默截断 `setText`，超长拒绝分支不可达，需直接调 `_send` 触发
+- Atria API 偶发连接失败（0.02~0.04s 内失败）属网络波动，引擎按 `stream_error` 正确处理并回 idle
+- offscreen 平台下全局热键注册拿不到真实 HWND，注册失败属平台假象
+
+**验证**
+
+- `tests/test_debug_mode.py`：15 个离线单测全绿（argv 触发、exe 名触发、无参不建文件不装钩子、目录名不误报、字段打码、截断与 full、5MB 滚动、`exc()` 写 traceback 等）
+- `tests/debug_walkthrough.py`：真实 Word + 真实 Atria API 全功能矩阵实测通过——发送（紧凑/面板）、流式写作、中断→回滚/保留/追加补充三支路、慢/自/快三档、写作/排版模式、修订开关、四个预设、存档、块地图开关与点击定位、设置对话框（开/改/确定/保存失败回退）、托盘菜单（显示/自启/退出）、拖动吸附、summon、Esc 隐藏、超长输入拒绝、排版 self-repair（gen_code 失败→fix_code→再执行成功）、退出流程；debug.log 中除已知预期项外无 ERROR/异常：
+  - `settings_load_failed`（首跑临时 settings 不存在，预期）
+  - `stmt_failed idx=1 src="x = 1 / 0"`（harness 注入的失败，预期）
+  - `run_code_sandbox_rejected`（沙箱正确拒绝 AI 代码中的 Import，预期且随后自修复成功）
+  - `autostart_disable_failed`（自启注册表项不存在，预期路径）
+  - `settings_save_failed`（harness 故意指向不存在目录，验证失败回退）
+  - `hotkey_register ok=false`（offscreen 平台假象）
+- 对照组：删除 debug.log 后不带 `-debug` 重跑全部操作，构成路径全部清空（`%APPDATA%\\AI4Word` 下仅余 9/30 遗留的 settings.json），通过
+
+**深度检查轮（按键 / 输入法 / 关闭 / 托盘，全部通过）**
+
+补齐上轮未覆盖的输入与窗口行为，断言逐条通过（真实 Word + 真实 API，offscreen）：
+
+- 紧凑框与面板框的 Enter 发送；Shift+Enter 仅插换行不发送；**输入法组字期 Enter 不发送**（`QInputMethodEvent` 模拟 preedit 组字状态，组字结束后恢复）
+- X 关闭按钮 → 隐藏到托盘 + 首次隐藏提示（新增 `close_to_tray` 日志点）；托盘双击召回、Context 激活不召回
+- 生成中存档 / 套预设被拒（队列空、预设 combo 归零）；设置对话框密码显示切换、Cancel 不改设置、自启启用失败 → 警告且对话框仍关闭、`auto_start` 保持 False
+
+**深度检查发现并修复的问题**
+
+1. `settings.load()` 首次运行（settings.json 不存在）落到异常分支并记 `WARN settings_load_failed`：每次全新安装的首跑都会在调试日志里产生一条误导性告警。改为 `FileNotFoundError` 记 `INFO settings_load_first_run`（正常首跑），其余 OSError / JSON 损坏仍记 `WARN`。
+2. `app/settings.py` 模块 docstring 内 `%APPDATA%\AI4Word` 的 `\A` 是非法转义（Python 3.12 SyntaxWarning，未来将报错），docstring 改为原始字符串（r 前缀三引号）。该告警此前在 pytest 每次运行时刷屏。
+
+**本轮日志 triage 结论**
+
+1138 行日志中 8 条 WARN/ERROR、1 条 traceback，全部为注入的失败路径或正常首跑（见上轮清单），无真实 bug；流式写作路径无重试、无漂移、每个流恰好一次 anchor_reset；排版自我修复链路（gen_code 失败 → fix_code 真实 API 9.3s 返回 → 沙箱拒绝含 Import 的修复码 → arrange_failed 正确上报）行为符合设计。对照组（无 `-debug`）再次全量通过且未生成任何日志文件。
+**深度实验工作流（30+ 轮迭代）**
+
+在调试模式之上建立了“实验 → 分析日志 → 修复 → 再实验”的闭环：
+`tests/experiment_lab.py`（offscreen Qt + fake Word + 脚本化 AI，11 个场景
+矩阵）单轮 exit code 0 = 干净。共完成 99 轮离线实验 + 2 轮真机走查（真实
+Word + Atria API），修复 2 个真实 bug（块顺序错位导致回滚重放错误 / 流式
+段落首尾空白导致回滚差 1 字符）与 4 处接线、时序问题，最终连续 31 轮
+0 findings、110 项单测通过、真机走查 0 失败。完整迭代表与修复清单见
+[EXPERIMENT_LOG.md](EXPERIMENT_LOG.md)。
+
+
 ---
+
 ## 核心技术栈
 
 - **AI服务**: Atria（Intern AI discovery 平台，OpenAI 兼容接口，SSE 流式）

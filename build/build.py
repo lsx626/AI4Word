@@ -30,7 +30,7 @@ HIDDEN = [
     "pythoncom", "pywintypes", "win32com", "win32com.client",
     "win32timezone",  # pywin32 常见缺失
     "markdown_it", "dotenv",
-    "app", "app.agent", "app.engine", "app.main_window",
+    "app", "app.agent", "app.debug", "app.engine", "app.main_window",
 ]
 
 # 开发态导入探针：用 Windows 加载器实测启动时真正需要的 DLL。

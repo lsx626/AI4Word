@@ -17,6 +17,7 @@ import time
 import pythoncom
 from PySide6.QtCore import QThread, Signal
 
+from app import debug
 from app.agent import WRITER_SYSTEM, build_exec_globals, fix_code, gen_code
 from doc_model import DocModel
 from format_runner import run_code
@@ -75,10 +76,13 @@ class AgentWorker(QThread):
     # ---------- 对外接口（GUI 线程调用） ----------
 
     def send(self, cmd, payload=None):
+        debug.log("queue_put", cmd=cmd,
+                  payload=str(payload)[:100] if payload is not None else None)
         self._queue.put((cmd, payload))
 
     def choose(self, value):
         """中断后的选择：'rollback' / 'keep' / ('extra', text)。"""
+        debug.log("choice_put", value=str(value)[:100])
         self._choice_q.put(value)
 
     def set_api_key(self, key):
@@ -104,10 +108,11 @@ class AgentWorker(QThread):
     # ---------- 线程主循环 ----------
 
     def run(self):
+        debug.log("worker_loop_start")
         try:
             pythoncom.CoInitialize()
         except Exception:
-            pass
+            debug.exc("coinit_failed")
         try:
             self.stateChanged.emit("idle")
             self.wordStatus.emit("未连接 Word")
@@ -118,6 +123,7 @@ class AgentWorker(QThread):
                     self._idle_poll(0.15)
                     continue
                 if cmd == "quit":
+                    debug.log("worker_loop_exit", reason="quit")
                     break
                 self._handle(cmd, payload)
         finally:
@@ -138,8 +144,11 @@ class AgentWorker(QThread):
         self._poll_acc = 0.0
         try:
             self._model.watch.poll()
-            for ev in self._model.drain_events():
+            events = list(self._model.drain_events())
+            for ev in events:
                 self.message.emit("info", f"检测到你的手动改动：{ev}")
+            if events:
+                debug.log("user_edits_detected", events=events)
             now = time.time()
         except Exception:
             return
@@ -158,6 +167,7 @@ class AgentWorker(QThread):
             self.progress.emit(str(text))
 
     def _handle(self, cmd, payload):
+        debug.log("handle_start", cmd=cmd)
         try:
             # 写入/排版类命令：必要时启动 Word；查看类命令只附加到已运行的 Word
             if cmd in ("write", "arrange", "preset", "save", "review"):
@@ -187,6 +197,7 @@ class AgentWorker(QThread):
             else:
                 self.message.emit("error", f"未知命令：{cmd}")
         except Exception as e:
+            debug.exc("handle_failed", cmd=cmd)
             self.message.emit("error", f"执行失败：{e}")
             self._reset_if_dead(e)
             self._busy = False
@@ -214,6 +225,7 @@ class AgentWorker(QThread):
         except Exception:
             app = None
         if app is None:
+            debug.warn("word_connect_failed", launch=launch)
             if launch:
                 self.message.emit("error", "无法连接 Microsoft Word，请先打开 Word 后再试。")
             else:
@@ -226,6 +238,7 @@ class AgentWorker(QThread):
             sel = app.Selection
             self._assemble(app, doc, sel)
         except Exception as e:
+            debug.exc("word_init_failed")
             self.message.emit("error", f"初始化 Word 环境失败：{e}")
             self.wordStatus.emit("未连接 Word")
             self.stateChanged.emit("idle")
@@ -268,6 +281,7 @@ class AgentWorker(QThread):
             imported = self._import_if_nonempty(model)
             if imported:
                 self.message.emit("info", f"已读取现有文档 {imported} 个块。")
+        debug.log("word_assembled", doc=name, restored=restored)
         self._emit_map()
 
     def _rebind_if_switched(self):
@@ -297,9 +311,11 @@ class AgentWorker(QThread):
         try:
             sel = self._app.Selection
             doc = active
+            debug.log("doc_switched_rebind")
             self._assemble(self._app, doc, sel)
             self.message.emit("info", "检测到你切换了文档，已重新绑定到当前活动文档。")
         except Exception as e:
+            debug.exc("rebind_failed")
             self.message.emit("error", f"切换文档失败：{e}")
 
     def _reset_if_dead(self, err):
@@ -307,6 +323,7 @@ class AgentWorker(QThread):
         if pywintypes is None:
             return
         if isinstance(err, pywintypes.com_error):
+            debug.warn("word_com_dropped")
             self._app = None
             self._model = None
             self.wordStatus.emit("未连接 Word")
@@ -346,6 +363,7 @@ class AgentWorker(QThread):
         self._interrupted = False
         self.message.emit("user", prompt)
         self.stateChanged.emit("writing")
+        debug.log("write_start", prompt=prompt, full=True)
         self._writer.set_speed(self._speed)
         self._writer.reset_anchor()  # 新一波写入：锚点从当前光标重新捕获
 
@@ -353,8 +371,10 @@ class AgentWorker(QThread):
         system = WRITER_SYSTEM  # 只允许输出正文，禁止任何前言/讨论/提问
         try:
             self._snap_before = self._model.snapshot()
+            debug.log("snapshot_taken", blocks=len(self._snap_before))
         except Exception:
             self._snap_before = None
+            debug.exc("snapshot_failed")
         received = 0
         self._set_progress("正在生成…")
         self.streamStart.emit()
@@ -366,16 +386,20 @@ class AgentWorker(QThread):
                 if not piece:
                     continue
                 received += len(piece)
+                if received // 100 != (received - len(piece)) // 100:
+                    debug.log("stream_progress", chars=received)
                 self.streamChunk.emit(piece)
                 self._writer.feed(piece)
                 self._set_progress(f"正在生成… 已接收 {received} 字")
         except Exception as e:
+            debug.exc("stream_error")
             self.message.emit("error", f"流式生成出错：{e}")
         try:
             self._writer.flush()
         except Exception:
             pass
         self.streamEnd.emit()
+        debug.log("write_done", chars=received, interrupted=self._interrupted)
         if received and not self._interrupted:
             self.message.emit("info", "已写入 Word。")
             self._set_progress(f"已写入 Word · 共 {received} 字")
@@ -409,13 +433,16 @@ class AgentWorker(QThread):
             choice = self._choice_q.get(timeout=300)
         except queue.Empty:
             choice = "keep"
+        debug.log("choice_made", choice=str(choice)[:100])
         self._interrupted = False
         if choice == "rollback":
             if self._snap_before is not None:
                 try:
                     self._model.restore_snapshot(self._snap_before)
+                    debug.log("rollback_ok", blocks=len(self._snap_before))
                     self.message.emit("info", "已回滚到生成前的文档状态。")
                 except Exception as e:
+                    debug.exc("rollback_failed")
                     self.message.emit("error", f"回滚失败：{e}")
             else:
                 self.message.emit("info", "没有可回滚的快照。")
@@ -423,6 +450,7 @@ class AgentWorker(QThread):
         elif isinstance(choice, tuple) and choice[0] == "extra":
             extra = (choice[1] or "").strip()
             if extra:
+                debug.log("extra_start", extra=extra, full=True)
                 self.message.emit("user", extra)
                 self.stateChanged.emit("writing")
                 from ai_client import ai_stream
@@ -442,12 +470,14 @@ class AgentWorker(QThread):
                         received += len(piece)
                         self._set_progress(f"正在追加… 已接收 {received} 字")
                 except Exception as e:
+                    debug.exc("extra_stream_error")
                     self.message.emit("error", f"追加生成出错：{e}")
                 try:
                     self._writer.flush()
                 except Exception:
                     pass
                 self.streamEnd.emit()
+                debug.log("extra_done", chars=received)
                 try:
                     self._model.save_blocks()
                 except Exception:
@@ -469,6 +499,7 @@ class AgentWorker(QThread):
         self._interrupt.clear()
         self.message.emit("user", prompt)
         self.stateChanged.emit("arranging")
+        debug.log("arrange_start", prompt=prompt, full=True)
 
         # 生成期间用户若动过文档，把漂移警告带给代码模型
         notices = []
@@ -493,10 +524,17 @@ class AgentWorker(QThread):
         try:
             code = gen_code(full_prompt, self._api_key, self._session,
                             block_map_fn=self._model.block_map, sink=sink)
+            debug.log("gen_code_result", ok=code is not None,
+                      chars=len(code or ""))
+            if code:
+                debug.log("gen_code", code=code, full=True)
         except Exception as e:
+            debug.exc("gen_code_failed")
             self.message.emit("error", f"请求 AI 失败：{e}")
             code = None
         if code is None or self._interrupt.is_set():
+            debug.log("arrange_failed",
+                      err="gen_code_failed" if code is None else "interrupted")
             self.message.emit("info", "已取消本次排版指令。")
             self._busy = False
             self.stateChanged.emit("idle")
@@ -505,13 +543,16 @@ class AgentWorker(QThread):
         self._set_progress("正在执行排版…")
         try:
             ok, err = run_code(code, self._exec_globals, sink=sink)
+            debug.log("run_code_result", ok=ok, err=str(err)[:200])
         except Exception as e:
+            debug.exc("run_code_failed")
             ok, err = False, f"{type(e).__name__}: {e}"
         if not ok:
             # 事务卡住时先回滚：修正代码将在「未受污染」的结构上重试，
             # 而不是在改了一半的文档上按原始指令臆测索引
             self._abort_txn_if_stuck()
         if ok:
+            debug.log("arrange_applied")
             self.message.emit("info", "代码执行完毕，已应用。")
             self._session.record_turn(prompt, True)
             self._persist()
@@ -521,6 +562,7 @@ class AgentWorker(QThread):
             return
 
         if self._interrupt.is_set():
+            debug.log("arrange_failed", err="interrupted")
             self._abort_txn_if_stuck()
             self.message.emit("info", "已取消自我修复。")
             self._busy = False
@@ -534,16 +576,24 @@ class AgentWorker(QThread):
             corrected = fix_code(full_prompt, code, err, self._api_key,
                                  self._session, sink=sink,
                                  block_map_fn=self._model.block_map)
+            debug.log("fix_code_result", ok=corrected is not None,
+                      chars=len(corrected or ""))
+            if corrected:
+                debug.log("fix_code", code=corrected, full=True)
         except Exception as e:
+            debug.exc("fix_code_failed")
             self.message.emit("error", f"自我修复请求失败：{e}")
         if corrected is None:
+            debug.log("arrange_failed", err="fix_code_failed")
             self.message.emit("error", "AI 未能生成有效代码，请换个说法再试。")
             self._busy = False
             self.stateChanged.emit("idle")
             return
         try:
             ok2, err2 = run_code(corrected, self._exec_globals, sink=sink)
+            debug.log("run_code2_result", ok=ok2, err=str(err2)[:200])
         except Exception as e:
+            debug.exc("run_code2_failed")
             ok2, err2 = False, f"{type(e).__name__}: {e}"
         if ok2:
             self.message.emit("info", "修正代码执行完毕，已应用。")
@@ -552,6 +602,7 @@ class AgentWorker(QThread):
             self._emit_map()
         else:
             self._abort_txn_if_stuck()
+            debug.log("arrange_failed", err=str(err2)[:200])
             self.message.emit("error", f"自我修复仍然失败（{err2}），试试更简单的指令。")
             self._session.record_turn(prompt, False)
         self._busy = False
@@ -570,8 +621,10 @@ class AgentWorker(QThread):
         try:
             if self._model.is_txn_active():
                 self._model.rollback_txn()
+                debug.log("txn_aborted")
                 self.message.emit("info", "已回滚未完成的事务。")
         except Exception as e:
+            debug.exc("txn_abort_failed")
             self.message.emit("error", f"回滚未完成事务失败：{e}")
 
     # ---------- 简单命令 ----------
@@ -583,13 +636,16 @@ class AgentWorker(QThread):
                 self._writer.set_speed(self._speed)
             except Exception:
                 pass
+        debug.log("speed_set", mode=self._speed)
 
     def _cmd_review(self, on):
         # 修订开关只翻转 TrackRevisions，不触碰文档内容，生成中切换无妨
         try:
             self._model.review_on() if on else self._model.review_off()
+            debug.log("review_set", on=bool(on))
             self.message.emit("info", f"已{'开启' if on else '关闭'}修订模式。")
         except Exception as e:
+            debug.exc("review_failed")
             self.message.emit("error", f"修订模式切换失败：{e}")
 
     def _cmd_preset(self, name):
@@ -599,26 +655,33 @@ class AgentWorker(QThread):
         try:
             result = apply_preset(self._doc, name)
             detail = "；".join(result.get("applied", [])) if isinstance(result, dict) else ""
+            debug.log("preset_applied", name=name)
             self.message.emit("info", f"已应用「{name}」预设。{detail}")
         except Exception as e:
+            debug.exc("preset_failed", name=name)
             self.message.emit("error", f"应用预设失败：{e}")
 
     def _cmd_select_block(self, index):
         try:
             self._model.select_block(int(index))
+            debug.log("select_block", index=index)
         except Exception as e:
+            debug.exc("select_block_failed")
             self.message.emit("error", f"无法定位第 {index} 块：{e}")
 
     def _cmd_save(self):
         # 存档只是把当前块模型写进文档变量，生成中调用得到的是一致的中间快照
         try:
             self._model.save_blocks()
+            debug.log("save_blocks", by="cmd")
             self.message.emit("info", "块索引已随文档存档。")
         except Exception as e:
+            debug.exc("save_failed")
             self.message.emit("error", f"存档失败：{e}")
 
     def interrupt(self):
         """GUI 中断按钮：流式写入立即停；排版阶段等 AI 响应后取消。"""
+        debug.log("interrupt_requested", busy=self._busy)
         self._interrupt.set()
         if self._busy and not self._interrupted:
             # 正在等 AI（非写入中）时，不能立即停，标记后由 _cmd_arrange 检查

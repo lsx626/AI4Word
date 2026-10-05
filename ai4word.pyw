@@ -10,6 +10,11 @@ import traceback
 
 
 def _crash_log():
+    try:
+        from app import debug
+        debug.exc("crash")
+    except Exception:
+        pass
     base = os.environ.get("APPDATA") or os.path.expanduser("~")
     path = os.path.join(base, "AI4Word", "crash.log")
     try:
@@ -67,6 +72,10 @@ def _strip_alien_qt_dirs():
 
 def main():
     _strip_alien_qt_dirs()
+    from app import debug
+    debug.init()
+    debug.log("startup", entry="ai4word.pyw", argv=list(sys.argv),
+              log_path=debug.log_path())
     from app.__main__ import main as _run
     sys.exit(_run(sys.argv))
 

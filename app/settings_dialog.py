@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QFormLayout
                                 QHBoxLayout, QLabel, QLineEdit, QMessageBox,
                                 QPushButton, QVBoxLayout)
 
+from app import debug
 from app.auto_start import disable, enable, is_enabled
 from app.settings import DEFAULT_BASE_URL, DEFAULT_MODEL
 
@@ -69,8 +70,16 @@ class SettingsDialog(QDialog):
         lay.addWidget(self.top_check)
         lay.addStretch(1)
         lay.addWidget(buttons)
+        debug.log("settings_open",
+                  auto_start=self.auto_check.isChecked(),
+                  stay_on_top=self.top_check.isChecked())
 
     def accept(self):
+        debug.log("settings_accept", api_key=self.key_edit.text().strip(),
+                  model=self.model_edit.text().strip(),
+                  base_url=self.url_edit.text().strip(),
+                  auto_start=self.auto_check.isChecked(),
+                  stay_on_top=self.top_check.isChecked())
         self.settings.set("api_key", self.key_edit.text().strip())
         self.settings.set("base_url", self.url_edit.text().strip() or DEFAULT_BASE_URL)
         self.settings.set("model", self.model_edit.text().strip() or DEFAULT_MODEL)
@@ -96,8 +105,10 @@ class SettingsDialog(QDialog):
 
         # 保存失败不能静默：用户会以为密钥已经存好
         if not self.settings.save():
+            debug.error("settings_save_failed", path=self.settings.path)
             QMessageBox.warning(self, "保存失败", f"设置未能写入磁盘（目录不可写或被占用）：\n"
                                 f"{self.settings.path}\n本次会话仍按新设置使用，"
                                 f"重启后失效。")
             return
+        debug.log("settings_saved", path=self.settings.path)
         super().accept()

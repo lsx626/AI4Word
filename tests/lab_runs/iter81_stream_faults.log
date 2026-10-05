@@ -1,0 +1,85 @@
+2026-10-05 09:58:35.157 [MainThread] INFO lab_iteration iter=81 scenario=stream_faults seed=8377
+2026-10-05 09:58:35.159 [MainThread] INFO settings_load_first_run path=C:\Users\lsx\AppData\Local\Temp\ai4word_lab_settings.json
+2026-10-05 09:58:35.197 [MainThread] INFO queue_put cmd=speed payload=fast
+2026-10-05 09:58:35.204 [Dummy-1] INFO worker_loop_start
+2026-10-05 09:58:35.204 [MainThread] INFO hotkey_register ok=false
+2026-10-05 09:58:35.205 [Dummy-1] INFO handle_start cmd=speed
+2026-10-05 09:58:35.208 [MainThread] INFO ui_state state=idle
+2026-10-05 09:58:35.208 [Dummy-1] INFO speed_set mode=fast
+2026-10-05 09:58:35.713 [MainThread] INFO speed_clicked mode=fast
+2026-10-05 09:58:35.717 [MainThread] INFO queue_put cmd=speed payload=fast
+2026-10-05 09:58:35.718 [Dummy-1] INFO handle_start cmd=speed
+2026-10-05 09:58:35.719 [Dummy-1] INFO speed_set mode=fast
+2026-10-05 09:58:36.268 [MainThread] INFO send_compact busy=false extra=false
+2026-10-05 09:58:36.269 [MainThread] INFO send chars=30 mode=write
+2026-10-05 09:58:36.270 [MainThread] INFO write_sent chars=30 prompt="lab probe: api connect failure"
+2026-10-05 09:58:36.272 [MainThread] INFO queue_put cmd=write payload="lab probe: api connect failure"
+2026-10-05 09:58:36.273 [Dummy-1] INFO handle_start cmd=write
+2026-10-05 09:58:36.275 [Dummy-1] INFO word_assembled doc=(未命名文档) restored=0
+2026-10-05 09:58:36.276 [Dummy-1] INFO write_start prompt="lab probe: api connect failure"
+2026-10-05 09:58:36.277 [Dummy-1] INFO set_speed mode=fast
+2026-10-05 09:58:36.277 [Dummy-1] INFO anchor_reset
+2026-10-05 09:58:36.279 [Dummy-1] INFO snapshot blocks=0
+2026-10-05 09:58:36.279 [Dummy-1] INFO snapshot_taken blocks=0
+2026-10-05 09:58:36.281 [Dummy-1] ERROR stream_error traceback="Traceback (most recent call last):
+  File \"D:\\Projects\\AI4Word\\app\\engine.py\", line 382, in _cmd_write
+    for piece in ai_stream(prompt, self._api_key, system):
+  File \"D:\\Projects\\AI4Word\\tests\\experiment_lab.py\", line 135, in fake_stream
+    raise ConnectionError(\"lab: simulated API connect failure\")
+ConnectionError: lab: simulated API connect failure
+"
+2026-10-05 09:58:36.282 [Dummy-1] INFO flush pending=0 in_draft=false
+2026-10-05 09:58:36.283 [Dummy-1] INFO write_done chars=0 interrupted=false
+2026-10-05 09:58:36.283 [Dummy-1] INFO save_blocks blocks=0 chunks=1
+2026-10-05 09:58:36.305 [MainThread] INFO ui_state state=connecting
+2026-10-05 09:58:36.306 [MainThread] INFO ui_state state=idle
+2026-10-05 09:58:36.309 [MainThread] INFO ui_state state=writing
+2026-10-05 09:58:36.313 [MainThread] INFO ui_state state=idle
+2026-10-05 09:58:36.520 [MainThread] INFO send_compact busy=false extra=false
+2026-10-05 09:58:36.521 [MainThread] INFO send chars=43 mode=write
+2026-10-05 09:58:36.522 [MainThread] INFO write_sent chars=43 prompt="lab probe: stream breaks after a few chunks"
+2026-10-05 09:58:36.523 [MainThread] INFO queue_put cmd=write payload="lab probe: stream breaks after a few chunks"
+2026-10-05 09:58:36.525 [Dummy-1] INFO handle_start cmd=write
+2026-10-05 09:58:36.527 [Dummy-1] INFO write_start prompt="lab probe: stream breaks after a few chunks"
+2026-10-05 09:58:36.528 [Dummy-1] INFO set_speed mode=fast
+2026-10-05 09:58:36.529 [Dummy-1] INFO anchor_reset
+2026-10-05 09:58:36.529 [Dummy-1] INFO snapshot blocks=0
+2026-10-05 09:58:36.530 [Dummy-1] INFO snapshot_taken blocks=0
+2026-10-05 09:58:36.531 [Dummy-1] INFO feed chars=5
+2026-10-05 09:58:36.555 [Dummy-1] INFO feed chars=5
+2026-10-05 09:58:36.559 [MainThread] INFO ui_state state=writing
+2026-10-05 09:58:36.579 [Dummy-1] INFO feed chars=5
+2026-10-05 09:58:36.604 [Dummy-1] ERROR stream_error traceback="Traceback (most recent call last):
+  File \"D:\\Projects\\AI4Word\\app\\engine.py\", line 382, in _cmd_write
+    for piece in ai_stream(prompt, self._api_key, system):
+  File \"D:\\Projects\\AI4Word\\tests\\experiment_lab.py\", line 139, in fake_stream
+    raise ConnectionError(\"lab: stream broke mid-flight\")
+ConnectionError: lab: stream broke mid-flight
+"
+2026-10-05 09:58:36.605 [Dummy-1] INFO flush pending=0 in_draft=true
+2026-10-05 09:58:36.607 [Dummy-1] INFO block_register kind=paragraph level=0 n_paras=1 total=1 at=0 preview="second document"
+2026-10-05 09:58:36.608 [Dummy-1] INFO write_done chars=15 interrupted=false
+2026-10-05 09:58:36.609 [Dummy-1] INFO save_blocks blocks=1 chunks=1
+2026-10-05 09:58:36.629 [MainThread] INFO ui_state state=idle
+2026-10-05 09:58:36.840 [MainThread] INFO send_compact busy=false extra=false
+2026-10-05 09:58:36.841 [MainThread] INFO send chars=25 mode=write
+2026-10-05 09:58:36.841 [MainThread] INFO write_sent chars=25 prompt="lab probe: empty AI reply"
+2026-10-05 09:58:36.842 [MainThread] INFO queue_put cmd=write payload="lab probe: empty AI reply"
+2026-10-05 09:58:36.843 [Dummy-1] INFO handle_start cmd=write
+2026-10-05 09:58:36.846 [Dummy-1] INFO write_start prompt="lab probe: empty AI reply"
+2026-10-05 09:58:36.847 [Dummy-1] INFO set_speed mode=fast
+2026-10-05 09:58:36.848 [Dummy-1] INFO anchor_reset
+2026-10-05 09:58:36.849 [Dummy-1] INFO snapshot blocks=1
+2026-10-05 09:58:36.851 [Dummy-1] INFO snapshot_taken blocks=1
+2026-10-05 09:58:36.852 [Dummy-1] INFO flush pending=0 in_draft=false
+2026-10-05 09:58:36.853 [Dummy-1] INFO write_done chars=0 interrupted=false
+2026-10-05 09:58:36.854 [Dummy-1] INFO save_blocks blocks=1 chunks=1
+2026-10-05 09:58:36.879 [MainThread] INFO ui_state state=writing
+2026-10-05 09:58:36.882 [MainThread] INFO ui_state state=idle
+2026-10-05 09:58:37.093 [MainThread] INFO queue_put cmd=speed payload=fast
+2026-10-05 09:58:37.093 [Dummy-1] INFO handle_start cmd=speed
+2026-10-05 09:58:37.095 [Dummy-1] INFO set_speed mode=fast
+2026-10-05 09:58:37.096 [Dummy-1] INFO speed_set mode=fast
+2026-10-05 09:58:37.440 [MainThread] INFO queue_put cmd=quit payload=null
+2026-10-05 09:58:37.441 [Dummy-1] INFO worker_loop_exit reason=quit
+2026-10-05 09:58:37.473 [MainThread] INFO ui_state state=idle

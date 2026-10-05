@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QHBoxLayou
                                QLabel, QLineEdit, QPushButton, QSplitter,
                                QTextEdit, QVBoxLayout, QWidget)
 
+from app import debug
 from app.avatar import Avatar
 from app.icons import (app_icon, icon_collapse, icon_expand, icon_gear, icon_keep,
                        icon_list, icon_rollback, icon_save, icon_send, icon_stop)
@@ -213,6 +214,22 @@ class MainWindow(QWidget):
         path.addRoundedRect(rect, CORNER_RADIUS, CORNER_RADIUS)
         return path
 
+    def _stop_anim(self):
+        """Settle a running expand/collapse animation onto its target.
+
+        Dragging and snapping used to yield entirely to the animation,
+        which swallowed any drag started within the 190ms collapse
+        window; settle it immediately and follow the cursor instead.
+        """
+        anim = self._anim
+        if anim is not None:
+            if anim.state() == QPropertyAnimation.Running:
+                target = anim.endValue()
+                anim.stop()
+                if isinstance(target, QRect):
+                    self.setGeometry(target)
+            self._anim = None
+
     def drag_to(self, global_pos, offset):
         """拖动中：跟随光标；离屏幕边缘很近时磁性吸附到边缘。"""
         rect = QRect(global_pos - offset, self.size())
@@ -231,13 +248,14 @@ class MainWindow(QWidget):
                 y = ag.bottom() - rect.height() - SNAP_PAD
             rect.moveTo(x, y)
             rect = self._clamp_to_screen(rect)
-        # 正在播展开/收起动画时让位，避免几何互相打架
-        if self._anim is None or self._anim.state() != QPropertyAnimation.Running:
-            self.move(rect.topLeft())
+        # settle the animation first so the drag is never swallowed
+        self._stop_anim()
+        self.move(rect.topLeft())
 
     def snap_to_edge(self):
         """松手时若离屏幕边缘很近就吸附，并记住位置。"""
         rect = self.geometry()
+        debug.log("snap_to_edge", pos=[rect.x(), rect.y()])
         screen = QApplication.screenAt(rect.center()) or QApplication.primaryScreen()
         if screen is None:
             return
@@ -254,15 +272,15 @@ class MainWindow(QWidget):
         if x != rect.x() or y != rect.y():
             rect.moveTo(x, y)
             rect = self._clamp_to_screen(rect)
-            # 正在播展开/收起动画时让位，避免几何互相打架；动画结束后 _anim 会被清空
-            if self._anim is None or self._anim.state() != QPropertyAnimation.Running:
-                self.move(rect.topLeft())
+            self._stop_anim()
+            self.move(rect.topLeft())
         self._remember_geometry()
 
     def _remember_geometry(self):
         self.settings.set("geometry", [self.x(), self.y()])
 
     def toggle_expand(self):
+        debug.log("toggle_expand", to=not self._expanded)
         self._apply_expanded(not self._expanded)
 
     def set_expanded(self, val):
@@ -311,6 +329,7 @@ class MainWindow(QWidget):
 
     def summon(self):
         """从托盘召回：显示并闪一下。"""
+        debug.log("summon", pos=[self.x(), self.y()], expanded=self._expanded)
         # 召回前校验几何：隐藏期间外接显示器拔掉后，Windows 不会迁移
         # 隐藏窗口，直接 show 会落在失效坐标上（窗口不可见且无法找回）
         self.setGeometry(self._clamp_to_screen(self.geometry()))
@@ -423,8 +442,7 @@ class MainWindow(QWidget):
         self.messages = MessageList(splitter)
         self.block_panel = BlockMapPanel(splitter)
         self.block_panel.setFixedWidth(212)
-        self.block_panel.blockClicked.connect(
-            lambda i: self.worker.send("select_block", i))
+        self.block_panel.blockClicked.connect(self._on_block_clicked)
         splitter.addWidget(self.messages)
         splitter.addWidget(self.block_panel)
         splitter.setStretchFactor(0, 1)
@@ -558,6 +576,7 @@ class MainWindow(QWidget):
         w.interrupted.connect(self._on_interrupted)
 
     def _on_state(self, state):
+        debug.log("ui_state", state=state)
         busy = state in ("writing", "arranging", "connecting")
         self._busy = busy
         avatar_state = "working" if busy else "idle"
@@ -610,6 +629,7 @@ class MainWindow(QWidget):
 
     def _on_mode(self, idx):
         self._write_mode = (idx == 0)
+        debug.log("mode_clicked", mode="write" if self._write_mode else "arrange")
         self._set_input_placeholder()
 
     def _on_review(self, on):
@@ -619,22 +639,27 @@ class MainWindow(QWidget):
         用户几分钟前点了一下、此时突然「已开启修订模式」毫无道理。
         """
         if self._busy:
+            debug.log("review_rejected_busy", on=on)
             self.messages.add("info", "生成中不能切换修订模式，请先中断当前生成。")
             self.btn_review.blockSignals(True)
             self.btn_review.setChecked(not on)
             self.btn_review.blockSignals(False)
             return
+        debug.log("review_toggled", on=bool(on))
         self.worker.send("review", bool(on))
 
     def _on_save(self):
         """存档按钮：生成中给出的只是中间快照且会被延迟，不如明确拒绝。"""
         if self._busy:
             self.messages.add("info", "正在生成，请先中断再存档。")
+            debug.log("save_rejected_busy")
             return
+        debug.log("save_clicked")
         self.worker.send("save")
 
     def _on_speed(self, idx):
         mode = ("slow", "auto", "fast")[idx]
+        debug.log("speed_clicked", mode=mode)
         self.settings.set("speed", mode)
         self.settings.save()
         # 直接设置而非走命令队列：worker 处理 write 期间不消费队列，
@@ -648,27 +673,36 @@ class MainWindow(QWidget):
             # 生成中套预设会和写入器的样式设置互相打架；不放队列延迟执行
             # （延迟执行会让用户在 minutes 后看到莫名其妙的「已应用」）
             self.messages.add("info", "生成中不能套用预设，请先中断当前生成。")
+            debug.log("preset_rejected_busy")
             self.preset_combo.setCurrentIndex(0)
             return
         name = self.preset_combo.itemText(idx)
+        debug.log("preset_selected", name=name)
         self.worker.send("preset", name)
         self.preset_combo.setCurrentIndex(0)
 
     def _toggle_blockmap(self):
         on = self.btn_blockmap.isChecked()
+        debug.log("blockmap_toggled", on=on)
         self.block_panel.setVisible(on)
         if on:
             self.worker.send("refresh_map")
 
+    def _on_block_clicked(self, index):
+        debug.log("block_clicked", index=index)
+        self.worker.send("select_block", index)
+
     def _on_send_compact(self):
-        if self._busy:
+        debug.log("send_compact", busy=self._busy, extra=self._extra_mode)
+        if self._busy and not self._extra_mode:
             self.worker.interrupt()
             return
         text = self.input_c.text().strip()
         self._send(text)
 
     def _on_send_panel(self):
-        if self._busy:
+        debug.log("send_panel", busy=self._busy, extra=self._extra_mode)
+        if self._busy and not self._extra_mode:
             self.worker.interrupt()
             return
         text = self.input_p.toPlainText().strip()
@@ -677,13 +711,17 @@ class MainWindow(QWidget):
     MAX_PROMPT_CHARS = 20000
 
     def _send(self, text):
+        debug.log("send", chars=len(text),
+                  mode="write" if self._write_mode else "arrange")
         if not text:
             return
         if len(text) > self.MAX_PROMPT_CHARS:
+            debug.log("send_rejected_too_long", chars=len(text))
             self.messages.add("info", f"输入超过 {self.MAX_PROMPT_CHARS} 字上限，"
                               "请缩减后再发送。")
             return
         if self._awaiting_choice and not self._extra_mode:
+            debug.log("send_rejected_awaiting_choice")
             if self._expanded:
                 self.messages.add("info", "请先选择 回滚 / 保留 / 追加补充。")
             else:
@@ -695,10 +733,13 @@ class MainWindow(QWidget):
             self._awaiting_choice = False
             self._choice_bar.setVisible(False)
             self._set_input_placeholder()
+            debug.log("extra_submitted", chars=len(text))
             self.worker.choose(("extra", text))
         elif self._write_mode:
+            debug.log("write_sent", chars=len(text), prompt=text, full=True)
             self.worker.send("write", text)
         else:
+            debug.log("arrange_sent", chars=len(text), prompt=text, full=True)
             self.worker.send("arrange", text)
         # 乐观置 busy：stateChanged 信号跨线程回来有几十毫秒延迟，
         # 这期间第二次 Enter 会被 worker 拒收「正在处理」但输入已被清空
@@ -708,6 +749,7 @@ class MainWindow(QWidget):
         self.input_p.clear()
 
     def _on_interrupted(self):
+        debug.log("interrupted_ui")
         self._awaiting_choice = True
         self._extra_mode = False
         self._choice_bar.setVisible(True)
@@ -717,6 +759,7 @@ class MainWindow(QWidget):
             self._apply_expanded(True)
 
     def _choose(self, value):
+        debug.log("choose", value=str(value)[:50])
         self._awaiting_choice = False
         self._extra_mode = False
         self._choice_bar.setVisible(False)
@@ -725,6 +768,7 @@ class MainWindow(QWidget):
 
     def _enter_extra_mode(self):
         self._extra_mode = True
+        debug.log("enter_extra_mode")
         # 不隐藏选择条：追加模式是「还能改主意」的状态，用户随时可以
         # 放弃输入直接点 回滚/保留（此前隐藏选择条 = 唯一退路是干等 5 分钟）
         self._set_input_placeholder()
@@ -734,6 +778,7 @@ class MainWindow(QWidget):
         """追加模式打消：回到选择条等待。Esc 优先走这里而不是直接收起窗口。"""
         if self._extra_mode:
             self._extra_mode = False
+            debug.log("exit_extra_mode")
             self._set_input_placeholder()
 
     # ---------- 窗口行为 ----------
@@ -749,8 +794,8 @@ class MainWindow(QWidget):
         p.setPen(Qt.NoPen)
         p.drawRect(rect)  # 不透明：整幅铺满；圆角形状由系统/DWM 切出
         p.setBrush(Qt.NoBrush)
-        border = AMBER if self._busy else QColor(INK_4)
-        p.setPen(QPen(border, 1.3))
+        border = AMBER if self._busy else INK_4
+        p.setPen(QPen(QColor(border), 1.3))
         p.drawPath(self._rounded_path(rect.adjusted(1, 1, -1, -1)))
 
     def resizeEvent(self, event):
@@ -803,6 +848,7 @@ class MainWindow(QWidget):
             elif self._expanded:
                 self._apply_expanded(False)
             else:
+                debug.log("hide_via_esc")
                 self.hide()
                 if self._tray:
                     self._tray.first_hide_hint()
@@ -811,6 +857,7 @@ class MainWindow(QWidget):
 
     def closeEvent(self, event):
         if self._tray is not None:
+            debug.log("close_to_tray")
             event.ignore()
             self.hide()
             self._tray.first_hide_hint()
@@ -821,9 +868,11 @@ class MainWindow(QWidget):
         self._tray = tray
 
     def _open_settings(self):
+        debug.log("settings_open")
         from app.settings_dialog import SettingsDialog
         dlg = SettingsDialog(self.settings, self.worker, parent=self)
         dlg.exec()
+        debug.log("settings_closed", api_key=self.settings.get("api_key"))
         self.reload_flags()
 
     def open_settings(self):
@@ -848,8 +897,10 @@ class MainWindow(QWidget):
             ok = user32.RegisterHotKey(int(self.winId()), 1,
                                        0x0002 | 0x0001, 0x20)  # Ctrl+Alt, Space
             self._hotkey = bool(ok)
+            debug.log("hotkey_register", ok=bool(ok))
         except Exception:
             self._hotkey = False
+            debug.warn("hotkey_register_failed")
         if not self._hotkey and not getattr(self, "_hotkey_hinted", False):
             # 热键被别的程序占用（放大镜、其它工具）时不能静默：
             # 用户按 Ctrl+Alt+Space 毫无反应却不知道为什么
@@ -867,6 +918,7 @@ class MainWindow(QWidget):
             except Exception:
                 pass
             self._hotkey = False
+            debug.log("hotkey_unregistered")
 
     def showEvent(self, event):
         super().showEvent(event)

@@ -2,6 +2,7 @@
 """系统托盘：显示/隐藏、开机自启、设置、退出；关窗即最小化到托盘。"""
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
+from app import debug
 from app.auto_start import is_enabled
 from app.icons import app_icon
 
@@ -32,14 +33,17 @@ class Tray(QSystemTrayIcon):
         self.activated.connect(self._on_activated)
 
     def _on_activated(self, reason):
+        debug.log("tray_activated", reason=str(reason))
         if reason == QSystemTrayIcon.DoubleClick:
             self.window.summon()
 
     def _toggle_autostart(self, on):
         from app.auto_start import disable, enable
+        debug.log("autostart_toggle", on=bool(on))
         if on:
             ok = enable()
             if not ok:
+                debug.warn("autostart_enable_failed")
                 # 注册表写入被拦截时回退菜单项状态，避免「勾上了但实际没生效」
                 from PySide6.QtWidgets import QMessageBox
                 self.act_autostart.blockSignals(True)
@@ -51,6 +55,7 @@ class Tray(QSystemTrayIcon):
                 return
         else:
             disable()
+            debug.log("autostart_disabled")
         self.settings.set("auto_start", bool(on))
         self.settings.save()
 
@@ -63,6 +68,7 @@ class Tray(QSystemTrayIcon):
                              QSystemTrayIcon.Information, 4000)
 
     def _quit(self):
+        debug.log("tray_quit")
         # 先隐藏托盘图标再退出，避免强杀路径下留下残影
         self.hide()
         self.window._unregister_hotkey()

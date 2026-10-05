@@ -25,6 +25,7 @@ from urllib.parse import unquote
 
 from markdown_it import MarkdownIt
 
+from app import debug
 from doc_model import _com_retry
 
 # --- Word COM 常量 ---
@@ -173,6 +174,7 @@ class StreamingWriter:
         调用方负责把选区定位到目标位置。
         """
         self._anchor = None
+        debug.log("anchor_reset")
 
     def _reselect_anchor(self):
         """写操作前：选区若已漂移（用户点了别处），拉回锚点。"""
@@ -198,9 +200,11 @@ class StreamingWriter:
     def set_speed(self, mode):
         """设置打字档位：auto（先慢后快）/ slow / fast。"""
         if mode not in ("auto", "slow", "fast"):
+            debug.warn("set_speed_invalid", mode=str(mode)[:60])
             return
         self._speed = mode
         self._emitted = 0
+        debug.log("set_speed", mode=mode)
 
     def _gear(self):
         """当前档位的 (批量大小, 延时系数)。"""
@@ -218,6 +222,7 @@ class StreamingWriter:
         """喂入一个流式片段（delta），内部自动切分并写出完整的块。"""
         if not piece:
             return
+        debug.log("feed", chars=len(piece))
         self._note_gap()
         watch = getattr(self.model, "watch", None)
         if watch is not None:
@@ -236,6 +241,8 @@ class StreamingWriter:
 
     def flush(self):
         """流结束后调用，把缓冲区里的剩余部分写出。"""
+        debug.log("flush", pending=len(self.pending),
+                  in_draft=self._draft is not None)
         watch = getattr(self.model, "watch", None)
         if watch is not None:
             watch.begin_write()
@@ -384,10 +391,43 @@ class StreamingWriter:
         """判定攒着的标记字符是标记（切换属性）还是普通字符（原样打出）。"""
         run = d.hold
         if next_ch is not None and next_ch.isspace():
-            # 后接空白：markdown 规则下不构成标记，原样输出
+            # A marker run followed by whitespace is usually literal
+            # (list bullet, "3 * 4 = 12"); but when bold/italic/code
+            # formatting is currently open it is a CLOSING delimiter,
+            # which CommonMark allows to be followed by whitespace.
+            # Closing here keeps streamed text byte-identical to the
+            # parsed block path used by write_block/restore_snapshot,
+            # so a rollback restores exactly the pre-write text.
+            if self._close_markers(d, run):
+                return
             for c in run:
                 self._draft_type(c)
             return
+        self._apply_markers(d, run)
+
+    def _close_markers(self, d, run):
+        """Read a marker run as a closing delimiter if possible.
+
+        Returns True when bold/italic/code formatting was actually
+        closed; False means the run must be typed literally instead.
+        """
+        c = run[0]
+        if c == "`":
+            if d.name == CODE_FONT_NAME and d._name_stack:
+                d.name = d._name_stack.pop()
+                return True
+            return False
+        n = min(len(run), 3)
+        closed = False
+        if n >= 2 and d.bold:
+            d.bold = False
+            closed = True
+        if (n == 1 or n == 3) and d.italic:
+            d.italic = False
+            closed = True
+        return closed
+
+    def _apply_markers(self, d, run):
         c = run[0]
         if c == "`":
             if d.name == CODE_FONT_NAME and d._name_stack:
@@ -430,6 +470,19 @@ class StreamingWriter:
         """块边界到达：草稿转正——回填颜色、规范化字体属性、登记为块。"""
         d = self._draft
         self._flush_draft_buffer()
+        if d.plain:
+            # Typed whitespace at the paragraph edges (a stream that
+            # trailed off with "plain ") stays in the document while the
+            # committed md is stripped; that mismatch makes rollback
+            # replay differ from the pre-rollback document. Trim both
+            # edges so document, plain text and md agree.
+            lead = len(d.plain) - len(d.plain.lstrip())
+            rest = d.plain[lead:]
+            trail = len(rest) - len(rest.rstrip())
+            if lead or trail:
+                self._trim_draft_edges(d, lead, trail)
+                d.plain = d.plain.strip()
+        md = md.strip()
         end = self.sel.Range.Start
         rng = self.doc.Range(d.start, end)
         try:
@@ -441,6 +494,29 @@ class StreamingWriter:
             end = self._commit_images(d.start, end, md)
             rng = self.doc.Range(d.start, end)
         self.model.register("paragraph", 0, md, d.plain, rng, 1)
+
+    def _trim_draft_edges(self, d, lead, trail):
+        """Delete typed whitespace at the draft's document edges.
+
+        Only whitespace verified against the document is removed, so
+        marker or image deltas are never clipped; a COM failure is
+        logged and tolerated because an untrimmed edge is at worst a
+        cosmetic space in the committed paragraph.
+        """
+        try:
+            end = self.sel.Range.Start
+            if lead:
+                r = self.doc.Range(d.start, d.start + lead)
+                if r.Text.strip() == "":
+                    r.Delete()
+                    end -= lead
+            if trail:
+                r = self.doc.Range(end - trail, end)
+                if r.Text.strip() == "":
+                    r.Delete()
+        except Exception:
+            debug.warn("draft_edge_trim_failed", lead=lead,
+                       trail=trail, draft_start=d.start)
 
     def _commit_images(self, start, plain_end, md):
         """把草稿期打出 alt 的图片替换为真实内联图片；返回新的块尾。
@@ -632,7 +708,10 @@ class StreamingWriter:
         流式写入内部走 _write_top_level → _write_md(keep_anchor=True)，
         锚点跨块延续（用户点别处时接着已写内容继续写）。
         """
-        return self._write_md(md_text, animate, keep_anchor=False)
+        blocks = self._write_md(md_text, animate, keep_anchor=False)
+        debug.log("write_block", blocks=len(blocks),
+                  kinds=[b.kind for b in blocks], preview=md_text)
+        return blocks
 
     def _write_md(self, md_text, animate=True, keep_anchor=False):
         """write_block 的实现；keep_anchor=False 时重置锚点。"""

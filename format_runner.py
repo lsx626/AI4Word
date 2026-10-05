@@ -11,6 +11,8 @@ with / 双下划线属性 / 危险内建），for 循环注入步数护栏（__g
 import ast
 import time
 
+from app import debug
+
 from sandbox import check, instrument, make_guard, SandboxError
 
 WD_NO_HIGHLIGHT = 0
@@ -46,16 +48,20 @@ def run_code(code, exec_globals, sink=print):
     """
     code = (code or "").strip()
     if not code:
+        debug.warn("run_code_empty")
         return False, "AI 返回了空代码"
+    debug.log("run_code_start", chars=len(code), code=code, full=True)
     try:
         tree = ast.parse(code)
     except SyntaxError as e:
         sink(f"  [语法错误] {e}")
+        debug.warn("run_code_syntax_error", error=str(e)[:200], code=code, full=True)
         return False, f"SyntaxError: {e}"
     try:
         check(tree)
     except SandboxError as e:
         sink(f"  [沙箱拦截] {e}")
+        debug.warn("run_code_sandbox_rejected", error=str(e)[:200])
         return False, f"SandboxError: {e}"
     guarded = instrument(tree)
 
@@ -68,6 +74,7 @@ def run_code(code, exec_globals, sink=print):
     for idx, (node, gnode) in enumerate(zip(statements, guarded.body), 1):
         src = ast.unparse(node)
         sink(f"[{idx}/{total}] {src}")
+        debug.log("stmt_start", idx=idx, total=total, src=src)
         before = None
         if app is not None:
             try:
@@ -77,17 +84,21 @@ def run_code(code, exec_globals, sink=print):
         try:
             exec(compile(ast.Module(body=[gnode], type_ignores=[]), "<ai>", "exec"),
                  exec_globals)
+            debug.log("stmt_ok", idx=idx)
             sink("    [ok]")
         except SandboxError as e:
             sink(f"    [沙箱拦截] {e}")
+            debug.warn("stmt_sandbox_rejected", idx=idx, error=str(e)[:200])
             return False, f"SandboxError: {e}"
         except Exception as e:
             sink(f"    [fail] {e}")
+            debug.exc("stmt_failed", idx=idx, src=src)
             return False, f"{type(e).__name__}: {e}"
         except BaseException as e:
             # 必须兜住 BaseException：raise SystemExit 会穿过 except Exception，
             # 在 GUI 里终结 worker 线程（命令队列再无人消费），在 CLI 里直接退进程
             sink(f"    [fail] {type(e).__name__}: {e}")
+            debug.exc("stmt_base_exception", idx=idx, etype=type(e).__name__)
             return False, f"{type(e).__name__}: {e}"
         # 可视化：该语句移动了选区 => 滚动到选区并闪烁
         if app is not None and before is not None:
@@ -97,4 +108,5 @@ def run_code(code, exec_globals, sink=print):
                     flash_selection(app)
             except Exception:
                 pass
+    debug.log("run_code_done", statements=total)
     return True, None

@@ -27,6 +27,7 @@ import time
 import pywintypes
 from markdown_it import MarkdownIt
 
+from app import debug
 from doc_watch import DocWatch
 
 WD_NO_HIGHLIGHT = 0
@@ -92,6 +93,14 @@ class Block:
         return f"<Block {self.kind} [{t}]>"
 
 
+def _block_pos(b):
+    """Document position of a block range; None when unavailable."""
+    try:
+        return int(b.range.Start)
+    except Exception:
+        return None
+
+
 class DocModel:
     def __init__(self, app, doc, sel, writer=None):
         self.app = app
@@ -111,8 +120,35 @@ class DocModel:
 
     def register(self, kind, level, md, text, rng, n_paras=1):
         b = Block(kind, level, md, text, rng, n_paras)
-        self.blocks.append(b)
+        at = self._insert_index(b.range)
+        if at >= len(self.blocks):
+            self.blocks.append(b)
+        else:
+            self.blocks.insert(at, b)
+        debug.log("block_register", kind=kind, level=level, n_paras=n_paras,
+                  total=len(self.blocks), at=at, preview=md)
         return b
+
+    def _insert_index(self, rng):
+        """Document-order insertion point for a new block range.
+
+        Mid-document writes (select_block moves the cursor into the
+        document body) must slot into the model at their document
+        position, otherwise rebuild_ranges and snapshot replay diverge
+        from the real layout.
+        """
+        try:
+            start = int(rng.Start)
+        except Exception:
+            return len(self.blocks)
+        for i in range(len(self.blocks) - 1, -1, -1):
+            try:
+                s = int(self.blocks[i].range.Start)
+            except Exception:
+                return len(self.blocks)
+            if s <= start:
+                return i + 1
+        return 0
 
     def rebuild_ranges(self):
         """编辑后按段落扫描重建每块的 Range。
@@ -194,6 +230,7 @@ class DocModel:
 
     def replace_block(self, i, md):
         """用新的 markdown 改写第 i 块（原段落保留，清空内容后重写）。"""
+        debug.log("replace_block", index=i, md_preview=md)
         self._require_index(i)
         self._require_md_str(md, "replace_block")
         self._push_undo()
@@ -210,15 +247,15 @@ class DocModel:
             b.range.Delete()
         pos = b.range.Start  # 动态 Range 在删除后塌缩到删除点
         self.doc.Range(pos, pos).Select()
-        # write_block 会把新块 register 到 blocks 末尾，先记下越界点再搬运到目标位置
-        before_count = len(self.blocks)
-        self.writer.write_block(md, animate=True)
-        new_blocks = self.blocks[before_count:]
+        new_blocks = self.writer.write_block(md, animate=True)
         if not new_blocks:
             # write_block 对空 md 返回 [] 会留下孤儿空段落且块索引错位；
             # _require_md_str 已在入口拒绝空 md，这里防御性兜底
             raise ValueError("replace_block 写入失败：未登记任何新块")
-        del self.blocks[before_count:]
+        # register() may have inserted the new blocks at a document
+        # position rather than the tail, so collect them by identity
+        new_ids = {id(nb) for nb in new_blocks}
+        self.blocks = [b for b in self.blocks if id(b) not in new_ids]
         self.blocks[i:i + 1] = new_blocks
         self.rebuild_ranges()
         self._flash(new_blocks[-1].range if new_blocks else None)
@@ -226,6 +263,7 @@ class DocModel:
 
     def insert_after(self, i, md):
         """在第 i 块之后插入新内容。"""
+        debug.log("insert_after", index=i, md_preview=md)
         self._require_index(i)
         self._require_md_str(md, "insert_after")
         self._push_undo()
@@ -255,12 +293,11 @@ class DocModel:
         # Range（报"数值超出范围"）；InsertAfter 先把文档撑长，pos 随即合法。
         if pos is not None:
             self.doc.Range(pos, pos).Select()
-        before_count = len(self.blocks)
-        self.writer.write_block(md, animate=True)
-        new_blocks = self.blocks[before_count:]
+        new_blocks = self.writer.write_block(md, animate=True)
         if not new_blocks:
             raise ValueError("insert_after 写入失败：未登记任何新块")
-        del self.blocks[before_count:]
+        new_ids = {id(nb) for nb in new_blocks}
+        self.blocks = [b for b in self.blocks if id(b) not in new_ids]
         self.blocks[i + 1:i + 1] = new_blocks
         self.rebuild_ranges()
         self._flash(new_blocks[-1].range if new_blocks else None)
@@ -268,6 +305,7 @@ class DocModel:
 
     def insert_at_end(self, md):
         """在文档末尾追加新内容。"""
+        debug.log("insert_at_end", md_preview=md)
         self._push_undo()
         if not self.blocks:
             return self.writer.write_block(md, animate=True)
@@ -275,6 +313,7 @@ class DocModel:
 
     def delete_block(self, i):
         """删除第 i 块（连同它占用的全部段落与段落标记）。"""
+        debug.log("delete_block", index=i)
         self._require_index(i)
         self._push_undo()
         b = self.blocks[i]
@@ -322,6 +361,7 @@ class DocModel:
 
     def replace_text(self, old, new):
         """全文查找替换；返回是否真的替换到内容。"""
+        debug.log("replace_text", old_preview=old, new_preview=new)
         if not isinstance(old, str) or not isinstance(new, str):
             raise ValueError("replace_text 的 old/new 必须是字符串")
         if not old:
@@ -477,6 +517,7 @@ class DocModel:
         """滚动到第 i 块并闪烁高亮（纯可视化用）。"""
         self._require_index(i)
         b = self.blocks[i]
+        debug.log("select_block", index=i, kind=b.kind)
         self._flash(b.range)
         return True
 
@@ -493,6 +534,7 @@ class DocModel:
             self.doc.TrackRevisions = True
         except Exception:
             pass
+        debug.log("review_on", prev_track=self._track_prev)
         return True
 
     def review_off(self):
@@ -501,6 +543,7 @@ class DocModel:
             self.doc.TrackRevisions = self._track_prev
         except Exception:
             pass
+        debug.log("review_off")
         return True
 
     def has_revisions(self):
@@ -564,6 +607,7 @@ class DocModel:
         k = n
         while self._clear_doc_variable(f"{BLOCKS_PROP}_{k}"):
             k += 1
+        debug.log("save_blocks", blocks=len(data), chunks=n)
         return len(data)
 
     def _set_doc_variable(self, name, value):
@@ -637,6 +681,7 @@ class DocModel:
         except Exception:
             self.blocks = []  # 重建失败：失效存档，交给调用方走 import_document
             return 0
+        debug.log("load_blocks", blocks=len(self.blocks))
         return len(self.blocks)
 
     # ---------- 首次接入已有文档：把现成段落登记为块 ----------
@@ -705,6 +750,7 @@ class DocModel:
         self.alignment_warning = None
         if total > limit:
             self.alignment_warning = f"文档较长（{total} 段），仅登记前 {limit} 段"
+        debug.log("import_document", paras=total, imported=n)
         return n
 
     def _doc_is_empty(self):
@@ -770,8 +816,10 @@ class DocModel:
 
     def snapshot(self):
         """当前块模型的快照（各块的 md 与结构），可传给 restore_snapshot。"""
+        debug.log("snapshot", blocks=len(self.blocks))
         return [{"kind": b.kind, "level": b.level, "md": b.md,
-                 "text": b.text, "n_paras": b.n_paras} for b in self.blocks]
+                 "text": b.text, "n_paras": b.n_paras,
+                 "pos": _block_pos(b)} for b in self.blocks]
 
     def restore_snapshot(self, snap):
         """按快照整篇重写文档（块 md 顺序重写），返回重建的块数。
@@ -781,9 +829,13 @@ class DocModel:
         任一块重写失败（COM 瞬断等）会抛 RuntimeError——文档已清空、按
         逐块写入到底写了多少是不确定状态，不能静默报「已回滚成功」。
         """
+        debug.log("restore_snapshot", blocks=len(snap or []))
         if self.writer is None:
             raise RuntimeError("没有可用的写入器，无法恢复快照")
         snap = list(snap or [])
+        # Replay in document order so the rebuilt layout matches the
+        # pre-write one even when a block was written mid-document.
+        snap.sort(key=lambda item: (item.get("pos") is None, item.get("pos") or 0))
         try:
             self.doc.Content.Delete()
         except Exception:
@@ -820,10 +872,12 @@ class DocModel:
                 f"（最后错误：{last_err}），文档可能不完整")
         self.alignment_warning = None  # 全新对齐，旧的漂移警告作废
         self.rebuild_ranges()
+        debug.log("restore_snapshot_done", blocks=len(self.blocks))
         return len(self.blocks)
 
     def model_undo(self):
         """快照撤销：回到上一个编辑前的块模型状态。"""
+        debug.log("model_undo", stack=len(self._undo_stack))
         if not self._undo_stack:
             return False
         cur = self.snapshot()
@@ -834,6 +888,7 @@ class DocModel:
 
     def model_redo(self):
         """快照重做（撤销之后才能用）。"""
+        debug.log("model_redo", stack=len(self._redo_stack))
         if not self._redo_stack:
             return False
         cur = self.snapshot()
@@ -855,6 +910,7 @@ class DocModel:
 
     def begin_txn(self):
         """开启事务：到 commit/rollback 之间的编辑是一个原子单元。"""
+        debug.log("begin_txn")
         if self._txn_active:
             raise RuntimeError("已有进行中的事务")
         self._txn_snap = self.snapshot()
@@ -865,6 +921,7 @@ class DocModel:
 
     def commit_txn(self):
         """提交事务：编辑保留（整条事务已作为一条快照撤销记录入栈）。"""
+        debug.log("commit_txn")
         if not self._txn_active:
             raise RuntimeError("没有进行中的事务")
         self._txn_active = False
@@ -878,6 +935,7 @@ class DocModel:
 
     def rollback_txn(self):
         """回滚事务：文档与块模型恢复到事务开始前。"""
+        debug.log("rollback_txn")
         if not self._txn_active:
             raise RuntimeError("没有进行中的事务")
         snap = self._txn_snap

@@ -21,3 +21,10 @@ build/_ai4word_gen.iss
 build/*.log
 build/*.txt
 build/preview_*.png
+
+# local scratch / cache dirs (unreadable junk, not deletable on this machine)
+.acl-recovery/
+.pytest_tmp/
+pytest-cache-files-*/
+_*.py
+_*.txt

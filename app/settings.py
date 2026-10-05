@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""设置持久化：%APPDATA%\AI4Word\settings.json，GUI 设置面板的值优先于 .env。"""
+r"""设置持久化：%APPDATA%\AI4Word\settings.json，GUI 设置面板的值优先于 .env。"""
 import json
 import os
 
+from app import debug
 from ai_client import DEFAULT_MODEL, get_base_url, set_base_url
 
 APP_NAME = "AI4Word"
@@ -31,6 +32,7 @@ def user_dir():
     try:
         os.makedirs(d, exist_ok=True)
     except OSError:
+        debug.warn("settings_dir_fallback", base=base)
         d = os.path.join(os.environ.get("TEMP") or os.path.expanduser("~") or ".",
                           APP_NAME)
         try:
@@ -68,7 +70,12 @@ class Settings:
         try:
             with open(self.path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-        except (OSError, ValueError):
+        except (OSError, ValueError) as e:
+            if isinstance(e, FileNotFoundError):
+                # normal first run: no settings file yet, use defaults
+                debug.log("settings_load_first_run", path=str(self.path)[:200])
+            else:
+                debug.warn("settings_load_failed", error=str(e)[:200])
             return self  # 首次运行 / 语法损坏：沿用默认值
         if isinstance(data, dict):
             for k, v in data.items():
@@ -87,7 +94,8 @@ class Settings:
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self._data, f, ensure_ascii=False, indent=2)
             os.replace(tmp, self.path)
-        except OSError:
+        except OSError as e:
+            debug.warn("settings_save_failed", error=str(e)[:200])
             return False
         return True
 

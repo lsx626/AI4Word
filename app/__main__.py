@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from PySide6.QtCore import QSharedMemory, QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from app import __version__
+from app import __version__, debug
 from app.engine import AgentWorker
 from app.icons import app_icon
 from app.main_window import MainWindow
@@ -19,6 +19,9 @@ from app.tray import Tray
 def main(argv=None):
     argv = sys.argv if argv is None else list(argv)
     load_dotenv()  # 与 CLI 一致：.env 里的密钥作为默认来源
+    debug.init(argv)
+    debug.log("startup", entry="app.__main__", argv=argv,
+              log_path=debug.log_path())
 
     app = QApplication(argv)
     app.setApplicationName("AI4Word")
@@ -36,6 +39,11 @@ def main(argv=None):
 
     settings = Settings().load()
     settings.apply_env()
+    debug.log("settings_loaded",
+              api_key=bool((settings.get("api_key") or "").strip()),
+              model=settings.get("model"), base_url=settings.get("base_url"),
+              speed=settings.get("speed"), stay_on_top=settings.get("stay_on_top"),
+              settings_path=settings.path)
 
     from app.auto_start import is_enabled
     try:
@@ -52,14 +60,17 @@ def main(argv=None):
     window.set_tray(tray)
     tray.show()
     window.show()  # 悬浮窗随启动出现（之后可最小化到托盘）
+    debug.log("window_shown", expanded=bool(settings.get("expanded")))
 
     worker.start()
+    debug.log("worker_started")
 
     if not (settings.get("api_key") or "").strip():
         # 首次运行：引导填写 API 密钥
         QTimer.singleShot(600, window.open_settings)
 
     code = app.exec()
+    debug.log("quitting", exit_code=code)
     try:
         # 退出时若 worker 正卡在「中断选择等待」上（_wait_choice 阻塞
         # 最多 5 分钟），quit 要等它结束才被处理 → 进程僵死。
@@ -68,8 +79,9 @@ def main(argv=None):
         worker.send("quit")
         worker.wait(4000)
     except Exception:
-        pass
-    settings.save()
+        debug.exc("worker_stop_failed")
+    saved = settings.save()
+    debug.log("quit", exit_code=code, settings_saved=saved)
     return code
 
 

@@ -618,6 +618,10 @@ class _FakeContentProxy:
         return getattr(self._doc, name)
 
     @property
+    def Text(self):
+        return self._doc.content
+
+    @property
     def Find(self):
         return FakeFind(self._doc)
 

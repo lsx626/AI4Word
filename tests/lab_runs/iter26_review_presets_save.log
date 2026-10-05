@@ -1,0 +1,143 @@
+2026-10-05 01:41:33.091 [MainThread] INFO lab_iteration iter=26 scenario=review_presets_save seed=5106
+2026-10-05 01:41:33.093 [MainThread] INFO settings_load_first_run path=C:\Users\lsx\AppData\Local\Temp\ai4word_lab_settings.json
+2026-10-05 01:41:33.129 [MainThread] INFO queue_put cmd=speed payload=fast
+2026-10-05 01:41:33.135 [Dummy-1] INFO worker_loop_start
+2026-10-05 01:41:33.135 [MainThread] INFO hotkey_register ok=false
+2026-10-05 01:41:33.136 [Dummy-1] INFO handle_start cmd=speed
+2026-10-05 01:41:33.139 [MainThread] INFO ui_state state=idle
+2026-10-05 01:41:33.139 [Dummy-1] INFO speed_set mode=fast
+2026-10-05 01:41:33.639 [MainThread] INFO speed_clicked mode=fast
+2026-10-05 01:41:33.645 [MainThread] INFO queue_put cmd=speed payload=fast
+2026-10-05 01:41:33.646 [Dummy-1] INFO handle_start cmd=speed
+2026-10-05 01:41:33.646 [Dummy-1] INFO speed_set mode=fast
+2026-10-05 01:41:34.198 [MainThread] INFO send_compact busy=false extra=false
+2026-10-05 01:41:34.200 [MainThread] INFO send chars=23 mode=write
+2026-10-05 01:41:34.201 [MainThread] INFO write_sent chars=23 prompt=写一首关于秋天的短诗：一个一级标题加两段正文。
+2026-10-05 01:41:34.202 [MainThread] INFO queue_put cmd=write payload=写一首关于秋天的短诗：一个一级标题加两段正文。
+2026-10-05 01:41:34.203 [Dummy-1] INFO handle_start cmd=write
+2026-10-05 01:41:34.205 [Dummy-1] INFO word_assembled doc=(未命名文档) restored=0
+2026-10-05 01:41:34.206 [Dummy-1] INFO write_start prompt=写一首关于秋天的短诗：一个一级标题加两段正文。
+2026-10-05 01:41:34.206 [Dummy-1] INFO set_speed mode=fast
+2026-10-05 01:41:34.207 [Dummy-1] INFO anchor_reset
+2026-10-05 01:41:34.208 [Dummy-1] INFO snapshot blocks=0
+2026-10-05 01:41:34.209 [Dummy-1] INFO snapshot_taken blocks=0
+2026-10-05 01:41:34.209 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.223 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.235 [MainThread] INFO ui_state state=connecting
+2026-10-05 01:41:34.236 [MainThread] INFO ui_state state=idle
+2026-10-05 01:41:34.236 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.239 [MainThread] INFO ui_state state=writing
+2026-10-05 01:41:34.263 [Dummy-1] INFO block_register kind=heading1 level=1 n_paras=1 total=1 preview="# heading one"
+2026-10-05 01:41:34.277 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.301 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.325 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.349 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.373 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.397 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.420 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.442 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.464 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.488 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.510 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.532 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.557 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.581 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.605 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.630 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.654 [Dummy-1] INFO stream_progress chars=100
+2026-10-05 01:41:34.655 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.680 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.703 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.727 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.751 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.775 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.798 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.822 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.846 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.870 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.894 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.917 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.941 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.966 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:34.989 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:35.013 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:35.038 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:35.062 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:35.064 [Dummy-1] INFO block_register kind=paragraph level=0 n_paras=1 total=2 preview="a fairly long body paragraph with **bold** and *italic* markers, deliberately over one hundred characters so the stream progress threshold is crossed more than once."
+2026-10-05 01:41:35.077 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:35.090 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:35.103 [Dummy-1] INFO stream_progress chars=200
+2026-10-05 01:41:35.104 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:35.117 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:35.131 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:35.145 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:35.158 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:35.172 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:35.233 [Dummy-1] INFO block_register kind=list level=0 n_paras=3 total=3 preview="- item alpha
+- item beta
+- item gamma"
+2026-10-05 01:41:35.256 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:35.281 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:35.304 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:35.329 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:35.353 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:35.377 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:35.401 [Dummy-1] INFO feed chars=5
+2026-10-05 01:41:35.425 [Dummy-1] INFO feed chars=4
+2026-10-05 01:41:35.447 [Dummy-1] INFO flush pending=0 in_draft=true
+2026-10-05 01:41:35.448 [Dummy-1] INFO block_register kind=paragraph level=0 n_paras=1 total=4 preview="tail paragraph to close the first document."
+2026-10-05 01:41:35.449 [Dummy-1] INFO write_done chars=264 interrupted=false
+2026-10-05 01:41:35.450 [Dummy-1] INFO save_blocks blocks=4 chunks=1
+2026-10-05 01:41:35.453 [MainThread] INFO ui_state state=idle
+2026-10-05 01:41:35.659 [MainThread] INFO queue_put cmd=_sync_doc_text payload="{'req': 1}"
+2026-10-05 01:41:35.662 [MainThread] INFO queue_put cmd=speed payload=fast
+2026-10-05 01:41:35.662 [Dummy-1] INFO handle_start cmd=speed
+2026-10-05 01:41:35.663 [Dummy-1] INFO set_speed mode=fast
+2026-10-05 01:41:35.664 [Dummy-1] INFO speed_set mode=fast
+2026-10-05 01:41:36.004 [MainThread] INFO review_toggled on=true
+2026-10-05 01:41:36.005 [MainThread] INFO queue_put cmd=review payload=True
+2026-10-05 01:41:36.007 [Dummy-1] INFO handle_start cmd=review
+2026-10-05 01:41:36.008 [Dummy-1] INFO review_on prev_track=false
+2026-10-05 01:41:36.010 [Dummy-1] INFO review_set on=true
+2026-10-05 01:41:36.245 [MainThread] INFO review_toggled on=false
+2026-10-05 01:41:36.246 [MainThread] INFO queue_put cmd=review payload=False
+2026-10-05 01:41:36.247 [Dummy-1] INFO handle_start cmd=review
+2026-10-05 01:41:36.248 [Dummy-1] INFO review_off
+2026-10-05 01:41:36.249 [Dummy-1] INFO review_set on=false
+2026-10-05 01:41:36.483 [MainThread] INFO review_rejected_busy on=true
+2026-10-05 01:41:36.794 [MainThread] INFO queue_put cmd=speed payload=fast
+2026-10-05 01:41:36.796 [Dummy-1] INFO handle_start cmd=speed
+2026-10-05 01:41:36.797 [Dummy-1] INFO set_speed mode=fast
+2026-10-05 01:41:36.798 [Dummy-1] INFO speed_set mode=fast
+2026-10-05 01:41:37.140 [MainThread] INFO preset_selected name=论文
+2026-10-05 01:41:37.141 [MainThread] INFO queue_put cmd=preset payload=论文
+2026-10-05 01:41:37.142 [Dummy-1] INFO handle_start cmd=preset
+2026-10-05 01:41:37.143 [Dummy-1] INFO preset_applied name=论文
+2026-10-05 01:41:37.381 [MainThread] INFO preset_selected name=公文
+2026-10-05 01:41:37.382 [MainThread] INFO queue_put cmd=preset payload=公文
+2026-10-05 01:41:37.383 [Dummy-1] INFO handle_start cmd=preset
+2026-10-05 01:41:37.385 [Dummy-1] INFO preset_applied name=公文
+2026-10-05 01:41:37.620 [MainThread] INFO preset_selected name=简历
+2026-10-05 01:41:37.621 [MainThread] INFO queue_put cmd=preset payload=简历
+2026-10-05 01:41:37.621 [Dummy-1] INFO handle_start cmd=preset
+2026-10-05 01:41:37.622 [Dummy-1] INFO preset_applied name=简历
+2026-10-05 01:41:37.860 [MainThread] INFO preset_selected name=博客
+2026-10-05 01:41:37.861 [MainThread] INFO queue_put cmd=preset payload=博客
+2026-10-05 01:41:37.862 [Dummy-1] INFO handle_start cmd=preset
+2026-10-05 01:41:37.863 [Dummy-1] INFO preset_applied name=博客
+2026-10-05 01:41:38.100 [MainThread] INFO queue_put cmd=speed payload=fast
+2026-10-05 01:41:38.101 [Dummy-1] INFO handle_start cmd=speed
+2026-10-05 01:41:38.102 [Dummy-1] INFO set_speed mode=fast
+2026-10-05 01:41:38.102 [Dummy-1] INFO speed_set mode=fast
+2026-10-05 01:41:38.444 [MainThread] INFO save_clicked
+2026-10-05 01:41:38.445 [MainThread] INFO queue_put cmd=save payload=null
+2026-10-05 01:41:38.446 [Dummy-1] INFO handle_start cmd=save
+2026-10-05 01:41:38.447 [Dummy-1] INFO save_blocks blocks=4 chunks=1
+2026-10-05 01:41:38.448 [Dummy-1] INFO save_blocks by=cmd
+2026-10-05 01:41:38.684 [MainThread] INFO queue_put cmd=speed payload=fast
+2026-10-05 01:41:38.685 [Dummy-1] INFO handle_start cmd=speed
+2026-10-05 01:41:38.686 [Dummy-1] INFO set_speed mode=fast
+2026-10-05 01:41:38.686 [Dummy-1] INFO speed_set mode=fast
+2026-10-05 01:41:39.028 [MainThread] INFO queue_put cmd=quit payload=null
+2026-10-05 01:41:39.030 [Dummy-1] INFO worker_loop_exit reason=quit
+2026-10-05 01:41:39.060 [MainThread] INFO ui_state state=idle
