@@ -5,4 +5,4 @@
 ai_client / doc_model / streaming_writer / format_runner / session / styles，
 CLI（main.py）与 GUI（app 包）共用 app.agent 里的代码生成提示词与执行环境。
 """
-__version__ = "9.4"
+__version__ = "9.5"

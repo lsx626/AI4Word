@@ -26,6 +26,18 @@ _RETRYABLE = (
 )
 _MAX_ATTEMPTS = 3
 
+def _should_retry(exc):
+    """???????????????????? 5xx???????
+
+    4xx ????????????/???????????????????
+    """
+    if isinstance(exc, _RETRYABLE):
+        return True
+    if isinstance(exc, requests.exceptions.HTTPError):
+        code = getattr(getattr(exc, "response", None), "status_code", None)
+        return isinstance(code, int) and 500 <= code < 600
+    return False
+
 
 def _model(model):
     """解析实际使用的模型名：参数 > 环境变量 ATRIA_MODEL > 默认值。"""
@@ -52,12 +64,16 @@ def get_base_url():
     return API_URL
 
 
-def ai_request(prompt, api_key, system_prompt, model=DEFAULT_MODEL, timeout=180):
-    """非流式请求，返回完整文本。
+def ai_request(prompt, api_key, system_prompt, model=DEFAULT_MODEL, timeout=180,
+               attempts=_MAX_ATTEMPTS):
+    """?????????????
 
-    出错时**抛出异常**（网络错误 / HTTP 4xx/5xx 等）：调用方（GUI 引擎与
-    CLI）负责捕获并给用户可见的反馈。老版本吞掉异常只 print，打包后的
-    无控制台程序里用户完全看不到失败原因。
+    ???**????**????? / HTTP 4xx/5xx ???????GUI ?
+    CLI??????????????????????? print??????
+    ?????????????
+    ?????? 5xx ???????????????????????
+    3 ???????????????"????"???????????
+    ??????????
     """
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
     data = {
@@ -68,20 +84,30 @@ def ai_request(prompt, api_key, system_prompt, model=DEFAULT_MODEL, timeout=180)
         ],
     }
     t0 = time.time()
-    try:
-        resp = requests.post(API_URL, headers=headers, json=data, timeout=timeout)
-        resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"]["content"]
-    except Exception:
-        debug.exc("api_request_failed", url=API_URL, model=data["model"],
-                  prompt_chars=len(prompt), has_key=bool(api_key),
-                  elapsed=round(time.time() - t0, 2))
-        raise
-    debug.log("api_request_ok", url=API_URL, model=data["model"],
-              prompt_chars=len(prompt), sys_prompt_chars=len(system_prompt),
-              has_key=bool(api_key), elapsed=round(time.time() - t0, 2),
-              chars=len(content), prompt=prompt, code=content, full=True)
-    return content
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            resp = requests.post(API_URL, headers=headers, json=data, timeout=timeout)
+            resp.raise_for_status()
+            content = resp.json()["choices"][0]["message"]["content"]
+        except Exception as exc:
+            debug.exc("api_request_failed", url=API_URL, model=data["model"],
+                      prompt_chars=len(prompt), has_key=bool(api_key),
+                      elapsed=round(time.time() - t0, 2))
+            # ???????"????"??????????????
+            # ai_stream ? received==0 ????????????????
+            if not (attempt < attempts and _should_retry(exc)):
+                raise
+            debug.warn("api_request_retry", attempt=attempt, max_attempts=attempts,
+                       error=str(exc)[:200], elapsed=round(time.time() - t0, 2))
+            time.sleep(min(0.6 * attempt, 2.0))
+            continue
+        debug.log("api_request_ok", url=API_URL, model=data["model"],
+                  prompt_chars=len(prompt), sys_prompt_chars=len(system_prompt),
+                  has_key=bool(api_key), elapsed=round(time.time() - t0, 2),
+                  chars=len(content), prompt=prompt, code=content, full=True)
+        return content
 
 
 def ai_stream(prompt, api_key, system_prompt, model=DEFAULT_MODEL, connect=10, read=600,
@@ -140,7 +166,7 @@ def ai_stream(prompt, api_key, system_prompt, model=DEFAULT_MODEL, connect=10, r
             can_retry = (
                 attempt < attempts
                 and received == 0
-                and isinstance(exc, _RETRYABLE)
+                and _should_retry(exc)
             )
             if not can_retry:
                 raise

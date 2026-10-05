@@ -25,6 +25,28 @@ class FakeResp:
             yield line
 
 
+class FakeHTTPResp:
+    """????????????? with ???? ai_stream ????"""
+
+    def __init__(self, status_code, content="ok-code"):
+        self.status_code = status_code
+        self._content = content
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.exceptions.HTTPError(
+                "%s Server Error" % self.status_code, response=self)
+
+    def json(self):
+        return {"choices": [{"message": {"content": self._content}}]}
+
+
 def sse(piece):
     return "data: " + json.dumps({"choices": [{"delta": {"content": piece}}]})
 
@@ -40,7 +62,7 @@ def patch_post(sequence):
         item = sequence[min(calls["n"] - 1, len(sequence) - 1)]
         if isinstance(item, Exception):
             raise item
-        if isinstance(item, FakeResp):
+        if isinstance(item, (FakeResp, FakeHTTPResp)):
             return item
         return FakeResp(item)
 
@@ -96,6 +118,60 @@ def test_attempts_exhausted_raises():
     try:
         with pytest.raises(requests.exceptions.ConnectionError):
             list(ai_client.ai_stream("p", "k", "s", attempts=2))
+        assert calls["n"] == 2
+    finally:
+        ai_client.requests.post = orig
+
+def test_ai_request_retries_502_then_succeeds():
+    seq = [FakeHTTPResp(502), FakeHTTPResp(200, "fixed-code")]
+    orig, calls = patch_post(seq)
+    try:
+        out = ai_client.ai_request("p", "k", "s", attempts=3)
+        assert out == "fixed-code"
+        assert calls["n"] == 2
+    finally:
+        ai_client.requests.post = orig
+
+
+def test_ai_request_retries_connection_error():
+    seq = [requests.exceptions.ConnectionError("gw reset"), FakeHTTPResp(200)]
+    orig, calls = patch_post(seq)
+    try:
+        out = ai_client.ai_request("p", "k", "s", attempts=3)
+        assert out == "ok-code"
+        assert calls["n"] == 2
+    finally:
+        ai_client.requests.post = orig
+
+
+def test_ai_request_4xx_not_retried():
+    seq = [FakeHTTPResp(401)]
+    orig, calls = patch_post(seq)
+    try:
+        with pytest.raises(requests.exceptions.HTTPError):
+            ai_client.ai_request("p", "k", "s", attempts=3)
+        assert calls["n"] == 1
+    finally:
+        ai_client.requests.post = orig
+
+
+def test_ai_request_attempts_exhausted_raises():
+    seq = [FakeHTTPResp(503)]
+    orig, calls = patch_post(seq)
+    try:
+        with pytest.raises(requests.exceptions.HTTPError):
+            ai_client.ai_request("p", "k", "s", attempts=2)
+        assert calls["n"] == 2
+    finally:
+        ai_client.requests.post = orig
+
+
+def test_ai_stream_retries_502_before_content():
+    seq = [FakeHTTPResp(502), FakeResp([sse("hello"), DONE])]
+    orig, calls = patch_post(seq)
+    try:
+        pieces = list(ai_client.ai_stream("p", "k", "s", attempts=3))
+        assert pieces == ["hello"]
         assert calls["n"] == 2
     finally:
         ai_client.requests.post = orig
