@@ -1,0 +1,113 @@
+2026-10-05 15:13:58.517 [MainThread] INFO lab_iteration iter=112 scenario=settings_dialog seed=59658
+2026-10-05 15:13:58.521 [MainThread] INFO settings_load_first_run path=C:\Users\lsx\AppData\Local\Temp\ai4word_lab_settings.json
+2026-10-05 15:13:58.556 [MainThread] INFO queue_put cmd=speed payload=fast
+2026-10-05 15:13:58.562 [Dummy-1] INFO worker_loop_start
+2026-10-05 15:13:58.562 [MainThread] INFO hotkey_register ok=false
+2026-10-05 15:13:58.563 [Dummy-1] INFO handle_start cmd=speed
+2026-10-05 15:13:58.567 [MainThread] INFO ui_state state=idle
+2026-10-05 15:13:58.567 [Dummy-1] INFO speed_set mode=fast
+2026-10-05 15:13:59.074 [MainThread] INFO speed_clicked mode=fast
+2026-10-05 15:13:59.082 [MainThread] INFO queue_put cmd=speed payload=fast
+2026-10-05 15:13:59.085 [Dummy-1] INFO handle_start cmd=speed
+2026-10-05 15:13:59.086 [Dummy-1] INFO speed_set mode=fast
+2026-10-05 15:13:59.631 [MainThread] INFO send_compact busy=false extra=false
+2026-10-05 15:13:59.632 [MainThread] INFO send chars=23 mode=write
+2026-10-05 15:13:59.632 [MainThread] INFO write_sent chars=23 prompt=写一首关于秋天的短诗：一个一级标题加两段正文。
+2026-10-05 15:13:59.634 [MainThread] INFO queue_put cmd=write payload=写一首关于秋天的短诗：一个一级标题加两段正文。
+2026-10-05 15:13:59.635 [Dummy-1] INFO handle_start cmd=write
+2026-10-05 15:13:59.637 [Dummy-1] INFO word_assembled doc=(未命名文档) restored=0
+2026-10-05 15:13:59.638 [Dummy-1] INFO write_start prompt=写一首关于秋天的短诗：一个一级标题加两段正文。
+2026-10-05 15:13:59.639 [Dummy-1] INFO set_speed mode=fast
+2026-10-05 15:13:59.640 [Dummy-1] INFO anchor_reset
+2026-10-05 15:13:59.640 [Dummy-1] INFO snapshot blocks=0
+2026-10-05 15:13:59.641 [Dummy-1] INFO snapshot_taken blocks=0
+2026-10-05 15:13:59.642 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:59.655 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:59.667 [MainThread] INFO ui_state state=connecting
+2026-10-05 15:13:59.668 [MainThread] INFO ui_state state=idle
+2026-10-05 15:13:59.669 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:59.672 [MainThread] INFO ui_state state=writing
+2026-10-05 15:13:59.695 [Dummy-1] INFO block_register kind=heading1 level=1 n_paras=1 total=1 at=0 preview="# heading one"
+2026-10-05 15:13:59.709 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:59.733 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:59.756 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:59.781 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:59.804 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:59.828 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:59.853 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:59.874 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:59.897 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:59.916 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:59.938 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:59.960 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:59.983 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.008 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.031 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.055 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.079 [Dummy-1] INFO stream_progress chars=100
+2026-10-05 15:14:00.080 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.103 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.127 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.151 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.175 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.199 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.223 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.247 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.271 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.295 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.319 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.343 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.368 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.392 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.416 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.440 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.464 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.487 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.489 [Dummy-1] INFO block_register kind=paragraph level=0 n_paras=1 total=2 at=1 preview="a fairly long body paragraph with **bold** and *italic* markers, deliberately over one hundred characters so the stream progress threshold is crossed more than once."
+2026-10-05 15:14:00.502 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.515 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.528 [Dummy-1] INFO stream_progress chars=200
+2026-10-05 15:14:00.529 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.543 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.556 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.569 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.583 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.596 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.656 [Dummy-1] INFO block_register kind=list level=0 n_paras=3 total=3 at=2 preview="- item alpha
+- item beta
+- item gamma"
+2026-10-05 15:14:00.679 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.702 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.727 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.751 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.775 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.799 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.823 [Dummy-1] INFO feed chars=5
+2026-10-05 15:14:00.847 [Dummy-1] INFO feed chars=4
+2026-10-05 15:14:00.869 [Dummy-1] INFO flush pending=0 in_draft=true
+2026-10-05 15:14:00.870 [Dummy-1] INFO block_register kind=paragraph level=0 n_paras=1 total=4 at=3 preview="tail paragraph to close the first document."
+2026-10-05 15:14:00.871 [Dummy-1] INFO write_done chars=264 interrupted=false
+2026-10-05 15:14:00.872 [Dummy-1] INFO save_blocks blocks=4 chunks=1
+2026-10-05 15:14:00.895 [MainThread] INFO ui_state state=idle
+2026-10-05 15:14:01.102 [MainThread] INFO queue_put cmd=_sync_doc_text payload="{'req': 1}"
+2026-10-05 15:14:01.104 [MainThread] INFO doc_sync req=1 rsp=1 served=true chars=242 preview="heading onea fairly long body paragraph with bold and italic markers, deliberately over one hundred characters so the st"
+2026-10-05 15:14:01.106 [MainThread] INFO queue_put cmd=speed payload=fast
+2026-10-05 15:14:01.107 [Dummy-1] INFO handle_start cmd=speed
+2026-10-05 15:14:01.108 [Dummy-1] INFO set_speed mode=fast
+2026-10-05 15:14:01.109 [Dummy-1] INFO speed_set mode=fast
+2026-10-05 15:14:01.455 [MainThread] INFO settings_open auto_start=false stay_on_top=true
+2026-10-05 15:14:01.456 [MainThread] INFO settings_accept api_key=sk-2fb...4fae model=Atria-Dawn-Preview base_url=https://discovery-api.intern-ai.org.cn/v1 auto_start=false stay_on_top=true
+2026-10-05 15:14:01.457 [MainThread] WARN autostart_disable_failed error="[WinError 2] 系统找不到指定的文件。"
+2026-10-05 15:14:01.462 [MainThread] INFO settings_saved path=C:\Users\lsx\AppData\Local\Temp\ai4word_lab_settings.json
+2026-10-05 15:14:01.464 [MainThread] INFO settings_open auto_start=false stay_on_top=true
+2026-10-05 15:14:01.464 [MainThread] INFO settings_accept api_key=sk-2fb...4fae model=Atria-Dawn-Preview base_url=https://discovery-api.intern-ai.org.cn/v1 auto_start=false stay_on_top=true
+2026-10-05 15:14:01.466 [MainThread] WARN autostart_disable_failed error="[WinError 2] 系统找不到指定的文件。"
+2026-10-05 15:14:01.467 [MainThread] WARN settings_save_failed error="[Errno 2] No such file or directory: 'C:\\\\Users\\\\lsx\\\\AppData\\\\Local\\\\Temp\\\\no_such_dir_ai4word\\\\settings.json.tmp'"
+2026-10-05 15:14:01.467 [MainThread] ERROR settings_save_failed path=C:\Users\lsx\AppData\Local\Temp\no_such_dir_ai4word\settings.json
+2026-10-05 15:14:01.469 [MainThread] INFO settings_open auto_start=false stay_on_top=true
+2026-10-05 15:14:01.473 [MainThread] INFO settings_open auto_start=false stay_on_top=true
+2026-10-05 15:14:01.474 [MainThread] INFO settings_accept api_key=sk-2fb...4fae model=Atria-Dawn-Preview base_url=https://discovery-api.intern-ai.org.cn/v1 auto_start=true stay_on_top=true
+2026-10-05 15:14:01.479 [MainThread] INFO settings_saved path=C:\Users\lsx\AppData\Local\Temp\ai4word_lab_settings.json
+2026-10-05 15:14:01.479 [MainThread] INFO queue_put cmd=quit payload=null
+2026-10-05 15:14:01.480 [Dummy-1] INFO worker_loop_exit reason=quit
+2026-10-05 15:14:01.511 [MainThread] INFO ui_state state=idle

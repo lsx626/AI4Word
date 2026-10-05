@@ -420,15 +420,22 @@ class AgentWorker(QThread):
 
     def _wait_choice(self):
         """中断后等用户选：回滚 / 保留 / 追加补充（超时 5 分钟按保留处理）。"""
-        self.message.emit("info", "已中断。可回滚本次生成、保留现状，或追加补充内容。")
-        self.interrupted.emit()
-        # 先清掉历史残留的选择（UI 双击等时序可能留下陈旧选择，
-        # 否则下一次中断会被它立刻消费，造成「自动回滚」的意外行为）
+        # 先清掉本次中断之前的历史残留选择（UI 上一次双击等时序可能留下
+        # 陈旧选择；若不清，下一次中断会被它立刻消费，造成"自动回滚"的
+        # 意外行为）。drain 必须在下面两个 emit 之前完成：emit 之后入队的
+        # 选择属于本次中断，要交给 get() 消费；若 drain 晚于 emit，极端
+        # 时序下本次合法选择会被误清，引擎将一直空等到 5 分钟超时。
+        _stale = 0
         while True:
             try:
                 self._choice_q.get_nowait()
+                _stale += 1
             except queue.Empty:
                 break
+        if _stale:
+            debug.warn("choice_queue_stale_cleared", cleared=_stale)
+        self.message.emit("info", "已中断。可回滚本次生成、保留现状，或追加补充内容。")
+        self.interrupted.emit()
         try:
             choice = self._choice_q.get(timeout=300)
         except queue.Empty:

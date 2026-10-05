@@ -1,0 +1,123 @@
+2026-10-05 15:13:31.172 [MainThread] INFO lab_iteration iter=107 scenario=arrange_ok seed=97979
+2026-10-05 15:13:31.175 [MainThread] INFO settings_load_first_run path=C:\Users\lsx\AppData\Local\Temp\ai4word_lab_settings.json
+2026-10-05 15:13:31.210 [MainThread] INFO queue_put cmd=speed payload=fast
+2026-10-05 15:13:31.217 [MainThread] INFO hotkey_register ok=false
+2026-10-05 15:13:31.218 [Dummy-1] INFO worker_loop_start
+2026-10-05 15:13:31.221 [Dummy-1] INFO handle_start cmd=speed
+2026-10-05 15:13:31.222 [Dummy-1] INFO speed_set mode=fast
+2026-10-05 15:13:31.234 [MainThread] INFO ui_state state=idle
+2026-10-05 15:13:31.724 [MainThread] INFO speed_clicked mode=fast
+2026-10-05 15:13:31.730 [MainThread] INFO queue_put cmd=speed payload=fast
+2026-10-05 15:13:31.732 [Dummy-1] INFO handle_start cmd=speed
+2026-10-05 15:13:31.735 [Dummy-1] INFO speed_set mode=fast
+2026-10-05 15:13:32.282 [MainThread] INFO send_compact busy=false extra=false
+2026-10-05 15:13:32.284 [MainThread] INFO send chars=23 mode=write
+2026-10-05 15:13:32.285 [MainThread] INFO write_sent chars=23 prompt=写一首关于秋天的短诗：一个一级标题加两段正文。
+2026-10-05 15:13:32.286 [MainThread] INFO queue_put cmd=write payload=写一首关于秋天的短诗：一个一级标题加两段正文。
+2026-10-05 15:13:32.287 [Dummy-1] INFO handle_start cmd=write
+2026-10-05 15:13:32.289 [Dummy-1] INFO word_assembled doc=(未命名文档) restored=0
+2026-10-05 15:13:32.290 [Dummy-1] INFO write_start prompt=写一首关于秋天的短诗：一个一级标题加两段正文。
+2026-10-05 15:13:32.291 [Dummy-1] INFO set_speed mode=fast
+2026-10-05 15:13:32.292 [Dummy-1] INFO anchor_reset
+2026-10-05 15:13:32.292 [Dummy-1] INFO snapshot blocks=0
+2026-10-05 15:13:32.293 [Dummy-1] INFO snapshot_taken blocks=0
+2026-10-05 15:13:32.294 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.308 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.319 [MainThread] INFO ui_state state=connecting
+2026-10-05 15:13:32.319 [MainThread] INFO ui_state state=idle
+2026-10-05 15:13:32.321 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.322 [MainThread] INFO ui_state state=writing
+2026-10-05 15:13:32.347 [Dummy-1] INFO block_register kind=heading1 level=1 n_paras=1 total=1 at=0 preview="# heading one"
+2026-10-05 15:13:32.360 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.385 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.409 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.433 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.457 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.481 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.505 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.527 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.548 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.568 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.590 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.612 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.637 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.661 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.685 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.709 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.733 [Dummy-1] INFO stream_progress chars=100
+2026-10-05 15:13:32.733 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.758 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.782 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.805 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.830 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.855 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.879 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.902 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.926 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.949 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.975 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:32.999 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:33.023 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:33.046 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:33.071 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:33.095 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:33.119 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:33.143 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:33.144 [Dummy-1] INFO block_register kind=paragraph level=0 n_paras=1 total=2 at=1 preview="a fairly long body paragraph with **bold** and *italic* markers, deliberately over one hundred characters so the stream progress threshold is crossed more than once."
+2026-10-05 15:13:33.158 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:33.171 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:33.185 [Dummy-1] INFO stream_progress chars=200
+2026-10-05 15:13:33.186 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:33.200 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:33.214 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:33.227 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:33.240 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:33.254 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:33.316 [Dummy-1] INFO block_register kind=list level=0 n_paras=3 total=3 at=2 preview="- item alpha
+- item beta
+- item gamma"
+2026-10-05 15:13:33.338 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:33.363 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:33.387 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:33.411 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:33.435 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:33.460 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:33.483 [Dummy-1] INFO feed chars=5
+2026-10-05 15:13:33.508 [Dummy-1] INFO feed chars=4
+2026-10-05 15:13:33.531 [Dummy-1] INFO flush pending=0 in_draft=true
+2026-10-05 15:13:33.532 [Dummy-1] INFO block_register kind=paragraph level=0 n_paras=1 total=4 at=3 preview="tail paragraph to close the first document."
+2026-10-05 15:13:33.533 [Dummy-1] INFO write_done chars=264 interrupted=false
+2026-10-05 15:13:33.534 [Dummy-1] INFO save_blocks blocks=4 chunks=1
+2026-10-05 15:13:33.542 [MainThread] INFO ui_state state=idle
+2026-10-05 15:13:33.749 [MainThread] INFO queue_put cmd=_sync_doc_text payload="{'req': 1}"
+2026-10-05 15:13:33.751 [MainThread] INFO doc_sync req=1 rsp=1 served=true chars=242 preview="heading onea fairly long body paragraph with bold and italic markers, deliberately over one hundred characters so the st"
+2026-10-05 15:13:33.752 [MainThread] INFO queue_put cmd=speed payload=fast
+2026-10-05 15:13:33.754 [Dummy-1] INFO handle_start cmd=speed
+2026-10-05 15:13:33.755 [Dummy-1] INFO set_speed mode=fast
+2026-10-05 15:13:33.755 [Dummy-1] INFO speed_set mode=fast
+2026-10-05 15:13:34.098 [MainThread] INFO mode_clicked mode=arrange
+2026-10-05 15:13:34.099 [MainThread] INFO send_panel busy=false extra=false
+2026-10-05 15:13:34.100 [MainThread] INFO send chars=52 mode=arrange
+2026-10-05 15:13:34.101 [MainThread] INFO arrange_sent chars=52 prompt="center all level-one headings and bold the first one"
+2026-10-05 15:13:34.102 [MainThread] INFO queue_put cmd=arrange payload="center all level-one headings and bold the first one"
+2026-10-05 15:13:34.102 [Dummy-1] INFO handle_start cmd=arrange
+2026-10-05 15:13:34.104 [Dummy-1] INFO arrange_start prompt="center all level-one headings and bold the first one"
+2026-10-05 15:13:34.105 [Dummy-1] INFO gen_code_result ok=true chars=44
+2026-10-05 15:13:34.105 [Dummy-1] INFO gen_code code="doc.Styles(-2).ParagraphFormat.Alignment = 1"
+2026-10-05 15:13:34.106 [Dummy-1] INFO run_code_start chars=44 code="doc.Styles(-2).ParagraphFormat.Alignment = 1"
+2026-10-05 15:13:34.108 [Dummy-1] INFO stmt_start idx=1 total=1 src="doc.Styles(-2).ParagraphFormat.Alignment = 1"
+2026-10-05 15:13:34.108 [Dummy-1] INFO stmt_ok idx=1
+2026-10-05 15:13:34.109 [Dummy-1] INFO run_code_done statements=1
+2026-10-05 15:13:34.110 [Dummy-1] INFO run_code_result ok=true err=None
+2026-10-05 15:13:34.111 [Dummy-1] INFO arrange_applied
+2026-10-05 15:13:34.111 [Dummy-1] INFO save_blocks blocks=4 chunks=1
+2026-10-05 15:13:34.135 [MainThread] INFO ui_state state=arranging
+2026-10-05 15:13:34.138 [MainThread] INFO ui_state state=idle
+2026-10-05 15:13:34.346 [MainThread] INFO mode_clicked mode=write
+2026-10-05 15:13:34.347 [MainThread] INFO queue_put cmd=speed payload=fast
+2026-10-05 15:13:34.348 [Dummy-1] INFO handle_start cmd=speed
+2026-10-05 15:13:34.349 [Dummy-1] INFO set_speed mode=fast
+2026-10-05 15:13:34.350 [Dummy-1] INFO speed_set mode=fast
+2026-10-05 15:13:34.692 [MainThread] INFO queue_put cmd=quit payload=null
+2026-10-05 15:13:34.692 [Dummy-1] INFO worker_loop_exit reason=quit
+2026-10-05 15:13:34.725 [MainThread] INFO ui_state state=idle

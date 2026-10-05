@@ -97,3 +97,35 @@
 {"iter": 90, "scenario": "arrange_repair", "seed": 8530, "elapsed": 4.4, "lines": 156, "events": 42, "fails": 0, "findings": [], "platform": []}
 {"iter": 91, "scenario": "arrange_gen_fail", "seed": 8547, "elapsed": 3.9, "lines": 123, "events": 32, "fails": 0, "findings": [], "platform": []}
 {"iter": 92, "scenario": "stream_faults", "seed": 8564, "elapsed": 2.5, "lines": 85, "events": 25, "fails": 0, "findings": [], "platform": []}
+{"iter": 93, "scenario": "stress_mixed", "seed": 9311, "elapsed": 31.5, "lines": 474, "events": 53, "fails": 0, "findings": [], "platform": []}
+{"iter": 94, "scenario": "write_basic", "seed": 97493, "elapsed": 7.3, "lines": 181, "events": 33, "fails": 0, "findings": [], "platform": []}
+{"iter": 95, "scenario": "interrupts", "seed": 69042, "elapsed": 11.4, "lines": 156, "events": 39, "fails": 0, "findings": [], "platform": []}
+{"iter": 96, "scenario": "arrange_ok", "seed": 93569, "elapsed": 3.8, "lines": 123, "events": 38, "fails": 0, "findings": [], "platform": []}
+{"iter": 97, "scenario": "arrange_repair", "seed": 67382, "elapsed": 4.4, "lines": 156, "events": 42, "fails": 0, "findings": [], "platform": []}
+{"iter": 98, "scenario": "arrange_gen_fail", "seed": 13410, "elapsed": 4.0, "lines": 123, "events": 32, "fails": 0, "findings": [], "platform": []}
+{"iter": 99, "scenario": "stream_faults", "seed": 7327, "elapsed": 2.5, "lines": 85, "events": 25, "fails": 0, "findings": [], "platform": []}
+{"iter": 100, "scenario": "review_presets_save", "seed": 2650, "elapsed": 6.2, "lines": 144, "events": 34, "fails": 0, "findings": [], "platform": []}
+{"iter": 101, "scenario": "settings_dialog", "seed": 87660, "elapsed": 3.2, "lines": 113, "events": 31, "fails": 0, "findings": [], "platform": []}
+{"iter": 102, "scenario": "keys_tray", "seed": 46831, "elapsed": 9.0, "lines": 214, "events": 34, "fails": 0, "findings": [], "platform": ["offscreen 下热键注册失败（无真实 HWND）"]}
+{"iter": 103, "scenario": "doc_persistence", "seed": 7381, "elapsed": 7.0, "lines": 169, "events": 28, "fails": 0, "findings": [], "platform": []}
+{"iter": 104, "scenario": "stress_mixed", "seed": 80234, "elapsed": 29.2, "lines": 503, "events": 66, "fails": 0, "findings": [], "platform": []}
+{"iter": 105, "scenario": "write_basic", "seed": 21057, "elapsed": 7.4, "lines": 181, "events": 33, "fails": 0, "findings": [], "platform": []}
+{"iter": 106, "scenario": "interrupts", "seed": 84443, "elapsed": 11.3, "lines": 156, "events": 39, "fails": 0, "findings": [], "platform": []}
+{"iter": 107, "scenario": "arrange_ok", "seed": 97979, "elapsed": 3.8, "lines": 123, "events": 38, "fails": 0, "findings": [], "platform": []}
+{"iter": 108, "scenario": "arrange_repair", "seed": 91355, "elapsed": 4.4, "lines": 156, "events": 42, "fails": 0, "findings": [], "platform": []}
+{"iter": 109, "scenario": "arrange_gen_fail", "seed": 28320, "elapsed": 4.0, "lines": 123, "events": 32, "fails": 0, "findings": [], "platform": []}
+{"iter": 110, "scenario": "stream_faults", "seed": 91636, "elapsed": 2.5, "lines": 85, "events": 25, "fails": 0, "findings": [], "platform": []}
+{"iter": 111, "scenario": "review_presets_save", "seed": 48704, "elapsed": 6.2, "lines": 144, "events": 34, "fails": 0, "findings": [], "platform": []}
+{"iter": 112, "scenario": "settings_dialog", "seed": 59658, "elapsed": 3.2, "lines": 113, "events": 31, "fails": 0, "findings": [], "platform": []}
+{"iter": 113, "scenario": "keys_tray", "seed": 34885, "elapsed": 8.9, "lines": 214, "events": 34, "fails": 0, "findings": [], "platform": ["offscreen 下热键注册失败（无真实 HWND）"]}
+{"iter": 114, "scenario": "doc_persistence", "seed": 83856, "elapsed": 7.0, "lines": 169, "events": 28, "fails": 0, "findings": [], "platform": []}
+{"iter": 115, "scenario": "stress_mixed", "seed": 66196, "elapsed": 26.3, "lines": 428, "events": 59, "fails": 0, "findings": [], "platform": []}
+{"iter": 116, "scenario": "interrupts", "seed": 61464, "elapsed": 11.4, "lines": 156, "events": 39, "fails": 0, "findings": [], "platform": []}
+{"iter": 117, "scenario": "stream_faults", "seed": 95011, "elapsed": 2.5, "lines": 85, "events": 25, "fails": 0, "findings": [], "platform": []}
+{"iter": 118, "scenario": "arrange_repair", "seed": 15573, "elapsed": 4.4, "lines": 156, "events": 42, "fails": 0, "findings": [], "platform": []}
+{"iter": 119, "scenario": "arrange_gen_fail", "seed": 50306, "elapsed": 4.0, "lines": 123, "events": 32, "fails": 0, "findings": [], "platform": []}
+{"iter": 120, "scenario": "stress_mixed", "seed": 54511, "elapsed": 41.5, "lines": 695, "events": 55, "fails": 0, "findings": [], "platform": []}
+{"iter": 121, "scenario": "interrupts", "seed": 30272, "elapsed": 11.3, "lines": 156, "events": 39, "fails": 0, "findings": [], "platform": []}
+{"iter": 122, "scenario": "stream_faults", "seed": 73884, "elapsed": 2.5, "lines": 85, "events": 25, "fails": 0, "findings": [], "platform": []}
+{"iter": 123, "scenario": "arrange_repair", "seed": 69797, "elapsed": 4.4, "lines": 156, "events": 42, "fails": 0, "findings": [], "platform": []}
+{"iter": 124, "scenario": "arrange_gen_fail", "seed": 1422, "elapsed": 4.0, "lines": 123, "events": 32, "fails": 0, "findings": [], "platform": []}
