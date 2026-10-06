@@ -1,19 +1,13 @@
 # -*- coding: utf-8 -*-
-"""离线回归：开机自启 disable() 的「无值删除」语义与设置对话框取消勾选。
+"""离线回归：开机自启 disable() 的「无值删除」语义与设置面板取消勾选。
 
-真机日志（tests/deep_runs，settings_dialog 场景窗 21:38:08.918 / .926）：
-SettingsDialog.accept 在未勾选自启时无条件调 auto_start.disable()，而
-本机 HKCU Run 键里没有 AI4Word 值 -> DeleteValue 抛 [WinError 2]，
-disable() 把它当 OSError WARN（autostart_disable_failed），与真实写入
-失败（杀软 / 组策略 / 权限拒绝）无法区分，两次「待确认告警」全是噪声。
+禁止项不存在时，取消自启是 no-op 成功（不是失败）——把 [WinError 2]
+当告警会与真实写入失败（杀软 / 组策略 / 权限）混为一谈。锁定：
+disable() 遇到不存在的值静默成功、真实失败仍走 autostart_disable_failed；
+accept() 未勾选时先问 is_enabled()，不以 KEY_SET_VALUE 打开注册表。
 
-根因不在注册表，而在 disable() 的失败语义：要删的东西不存在时，
-取消自启是 no-op 成功，不是失败。真实失败仍走 autostart_disable_failed
-告警（本文件第 4 条钉死）。accept() 另加 is_enabled() 前置，避免在
-无值时仍以 KEY_SET_VALUE 打开注册表。
-
-注册表副作用隔离：RUN_KEY / VALUE_NAME 被改指向 HKCU\\Software\\
-AI4WordTest\\Run 下的临时键，退出时整体删除，绝不碰真实 Run 键。
+注册表副作用隔离：RUN_KEY / VALUE_NAME 指向 HKCU\\Software\\
+AI4WordTest\\Run 下的临时键，退出时整体删除，不碰真实 Run 键。
 """
 import contextlib
 import os

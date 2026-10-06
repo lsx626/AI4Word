@@ -11,7 +11,7 @@
 app.settings 一致：APPDATA -> 用户主目录 -> TEMP），单文件超过 5MB
 滚动为 debug.log.bak（只保留一个备份）。
 
-本模块只做记录，绝不改变任何调用方的行为与控制流。
+本模块只做记录，不改变调用方的行为与控制流。
 """
 import json
 import os

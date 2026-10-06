@@ -1,25 +1,19 @@
 # -*- coding: utf-8 -*-
 """deep_test 并行槽编排器：把场景清单分到 K 个子进程槽并行跑，合并结果。
 
-为什么能并行：
-- 测试输入是 QTest 程序化事件（发给具体控件，不经操作系统焦点），多个
-  QApplication 进程可以在同一桌面共存；
-- 每槽的隔离通过环境变量实现：独立 debug.log（AI4WORD_DEBUG_LOG，否则多进程
-  会互相覆盖/抢占 %APPDATA%\\AI4Word\\debug.log 的滚动）、独立单实例锁
-  （AI4WORD_SHM_KEY）、独立临时 settings（AI4WORD_TEST_SETTINGS）；
-- 每槽各自 Dispatch 一个新的 Word 实例（AI4WORD_TEST_FORCE_NEW_WORD=1
-  让 make_word 跳过 GetObject 附加；否则所有槽会附加到同一个 Word 进程
-  的同一个 ActiveDocument，互相写进同一篇文档），写自己的临时空文档；
-  且槽内查看类命令的重连被 _attach_factory 钉回本槽自己的 Word 实例。
-- 机器级全局状态固定只让槽 0 跑：全局热键（RegisterHotKey 的
-  Ctrl+Alt+Space）与开机自启注册表（见 deep_test.SLOT0_ONLY）。
-- 槽种子（deep_test.SLOT_SEED = compact_send + review_presets_save）每槽
-  都先跑，保证块地图 / doc_persistence 这类依赖「同槽内先有写入与存档」
-  的场景闭合；种子很轻（一条短 AI 写入 + 本地操作），并行跑墙钟成本≈一份，
-  但合并报告里这两个场景名会出现 K 次（每槽一份），属预期。
-
-槽位划分由 deep_test.slot_assignment 统一计算，编排器与各测试进程用同一
-函数，保证所见即所分。
+机制（详见 DEEP_TEST_WORKFLOW.md 第五节）：
+- QTest 程序化事件发给具体控件、不经操作系统焦点，多进程可同桌面共存；
+- 每槽环境变量隔离：独立日志（AI4WORD_DEBUG_LOG）、独立单实例锁
+  （AI4WORD_SHM_KEY）、独立临时 settings（AI4WORD_TEST_SETTINGS）、
+  各自 Dispatch 新 Word 实例（AI4WORD_TEST_FORCE_NEW_WORD，否则 GetObject
+  会让所有槽写进同一篇文档）；槽内查看类命令的重连由 _attach_factory
+  钉回本槽实例；
+- 机器级全局状态只让槽 0 跑（全局热键、自启注册表，见 deep_test.SLOT0_ONLY）；
+- 槽种子（SLOT_SEED = compact_send + review_presets_save）每槽先跑，
+  保证块地图 / doc_persistence 的依赖在同槽闭合——合并报告里这两个
+  场景名出现 K 次（每槽一份），属预期；
+- 槽位划分由 deep_test.slot_assignment 统一计算，编排器与测试进程同源，
+  所见即所分。
 
 用法：
     .venv\\python.exe tests\\deep_parallel.py                 # 默认 3 槽
@@ -27,12 +21,9 @@
     .venv\\python.exe tests\\deep_parallel.py --only interrupt
     .venv\\python.exe tests\\deep_parallel.py --seed 31337 --slots 2
 
-合并产物在 tests\\deep_runs\\<时间戳>\\：
-- summary.json  合并后的全量结果（scenarios 为各槽并集）
-- triage.txt    各槽 triage 的拼接（带槽头）
-- slot<N>/      各槽自己的 debug.log / summary.json / triage.txt / console.log
-
-退出码：0 全绿 / 1 有发现 / 2 有槽崩溃（未产出 summary）。
+合并产物在 tests\\deep_runs\\<时间戳>\\：summary.json（各槽并集）、
+triage.txt（各槽拼接）、slot<N>/（各槽明细）。退出码：0 全绿 / 1 有发现 /
+2 有槽崩溃（未产出 summary）。
 """
 import argparse
 import datetime

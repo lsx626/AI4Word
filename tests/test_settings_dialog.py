@@ -1,15 +1,12 @@
 # -*- coding: utf-8 -*-
 """离线测试：设置对话框生命周期事件接线（settings_open / settings_closed）。
 
-回归缺口：settings_open 由 SettingsDialog.__init__ 打，而 settings_closed
-只挂在 MainWindow._open_settings 的包装路径里（dlg.exec() 之后）。一旦调用方
-直接构造 SettingsDialog 并 accept/reject（调试演练场景就是如此），日志里
-settings_open 有、settings_closed 永远没有——单路径事件缺口。
-
-现在 SettingsDialog.done() 是统一收口：accept / reject / Esc / 点 X 都发一次
-settings_closed；accept 在保存失败时提前 return（done 不被调用），对话框没关
-就不报「已关闭」。本文件同时验证「直接构造」与「经 MainWindow._open_settings
-真实入口」两条路径的事件计数都恰好为 1。
+settings_closed 若只挂在 MainWindow._open_settings 的包装路径上，
+直接构造 SettingsDialog 并 accept/reject 的调用方就永远缺
+settings_closed。现在 done() 是统一收口：accept / reject / Esc / 点 X
+都发一次；accept 在保存失败时提前 return（done 不被调用），
+对话框没关就不报「已关闭」。本文件验证「直接构造」与「经
+MainWindow._open_settings」两条路径的事件计数都恰好为 1。
 """
 import contextlib
 import os

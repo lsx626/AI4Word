@@ -85,6 +85,6 @@ def test_sandbox_guard_limit():
     g = {"word_app": app, "log": []}
     ok, err = run_code("for i in range(1000000):\n    log.append(i)", g)
     assert not ok and "SandboxError" in err and "上限" in err, (ok, err)
-    assert len(g["log"]) < 100000, "护栏应该在有限步内掐死循环"
+    assert len(g["log"]) < 100000, "护栏应该在有限步内终止循环"
     print(f"ok: 循环步数护栏（{len(g['log'])} 步后终止）")
 

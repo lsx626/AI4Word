@@ -24,7 +24,7 @@ def main():
     time.sleep(0.8)
     _ = doc.Content.Text  # 预热一次读取
     sel = app.Selection
-    # 这里的 feed 之间没有网络延迟，用一个真打字节奏的写入器
+    # 这里的 feed 之间没有网络延迟，写入器以真实打字节奏工作
     writer = StreamingWriter(app, doc, sel, model=None, char_delay=0.005)
     model = DocModel(app, doc, sel, writer)
     writer.model = model

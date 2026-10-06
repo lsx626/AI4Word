@@ -1,18 +1,15 @@
 # -*- coding: utf-8 -*-
 """deep_test 的调试日志窗口解析（纯 stdlib + app.debug，无 Qt / COM 依赖）。
 
-从 tests/deep_test.py 抽出，目的：deep_test.py 是真实驱动入口，导入即
-锁定 QT_QPA_PLATFORM=windows 并向 sys.argv 追加 -debug，不能被离线测试套件
-（run_offline）导入；本模块只依赖 os/re/datetime/math 与 app.debug，离线
-回归测试可以直接 import，直接覆盖 _parse_window 的窗口语义（见
-tests/test_debug_window.py）。
+deep_test.py 是真实驱动入口，导入即锁定 QT_QPA_PLATFORM=windows 并向
+sys.argv 追加 -debug，不能被离线套件（run_offline）导入；本模块只依赖
+os/re/datetime/math 与 app.debug，离线回归可直接 import
+（覆盖 _parse_window 的窗口语义，见 tests/test_debug_window.py）。
 
-分辨率对齐（V9.6 修复的根因）：app.debug._emit 写日志时把时间戳截断到
-毫秒（地板），而调用方拿到的是微秒精度的 time.time()。若窗口起点保留
-亚毫秒尾巴，场景第一个动作恰好落在与起点同一毫秒时，其日志时间戳 floor
-后小于起点（如 14.759 < 14.7594）会被窗口剔除——系统性吃掉每个场景的
-首事件（speed_gears 的首个 speed_clicked、arrange_ok 的首个 mode_clicked、
-review_presets_save 的首个 review_toggled 等 MUST 事件）。
+时间精度对齐：app.debug._emit 写日志时把时间戳截断到毫秒（地板），
+而调用方拿到的是微秒精度的 time.time()。窗口起点若保留亚毫秒尾巴，
+首个动作可能 floor 后落在起点之前（如 14.759 < 14.7594）被系统性剔除
+——这正是 V9.6 修复掉的「每场景首事件缺失」根因。
 """
 import datetime
 import math

@@ -37,7 +37,7 @@ def main_flow():
     api_key = os.getenv("ATRIA_API_KEY")
     assert api_key, "请在 .env 设置 ATRIA_API_KEY"
 
-    # 连接到已运行的 Word，但强制新建空文档，绝不写入用户的活动文档
+    # 连接到已运行的 Word，但强制新建空文档，不写入用户的活动文档
     try:
         app = win32com.client.GetObject(None, "Word.Application")
         print("已连接到现有的 Word 程序。")

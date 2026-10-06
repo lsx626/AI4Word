@@ -49,11 +49,11 @@ SENT = {"n": 0, "per_cmd": {}}  # 发送侧计数，与 DONE 竞态；见 wait_h
 CHARS = {"n": 0}  # chars delivered via worker.streamChunk
 
 # 不计入 SENT/DONE 的命令（两侧必须对称排除）：
-# - quit：run() 循环直接拦截，根本不走 _handle，DONE 侧永远没有对应项；
+# - quit：run() 循环直接拦截，不经 _handle，DONE 侧永远没有对应项；
 # - _sync_doc_text / _read_doc_vars：只读探针，完成经各自的 rsp 标志确认
 #   （DOC_BOX / deep_test.DOC_VARS），从不进 wait_handled 的等待。
 # 一侧计、另一侧不计会让 SENT/DONE 永久失步，之后每条 wait_handled 都
-# 误判失败并烧满超时（V9.5 真机日志里 doc_persistence 的 refresh_map
+# 误判失败并等满超时（V9.5 真机日志里 doc_persistence 的 refresh_map
 # 就是被 _read_doc_vars 这样失步误报 FAIL 的）。
 _UNCOUNTED = frozenset({"_sync_doc_text", "_read_doc_vars", "quit"})
 
@@ -191,7 +191,7 @@ def wait_handled(worker, timeout=180, cmd=None):
     自己的发送/处理计数。后者不受探针命令（_sync_doc_text /
     _read_doc_vars 等两侧对称排除、或任何原因造成的全局失步）影响：
     一条已处理完的命令不会因为全局计数追不平而被误判成「没完成」、
-    白白烧满整个超时。
+    白白等满整个超时。
     """
     if cmd is not None:
         target = SENT["per_cmd"].get(cmd, 0)

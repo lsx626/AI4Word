@@ -89,10 +89,10 @@ def test_apply_env_sets_and_skips_empty():
     assert get_base_url() == DEFAULT_BASE_URL  # 空设置回落默认
 
 
-def test_test_slot_redacts_api_key_on_disk():
+def test_slot_settings_redact_api_key():
     """AI4WORD_TEST_SETTINGS（deep_test 并行槽）下 save() 不把 api_key
-    写入临时 settings 文件——槽级 settings 留在 tests/deep_runs/ 归档里，
-    明文密钥会被 git/分享带走；内存中的值不受影响，API 调用走 env。"""
+    写入临时文件；内存中的值不受影响，API 调用走 os.environ
+    （apply_env / main.py / engine.py 均不读盘上的 api_key）。"""
     slot_path = os.path.join(os.environ["TEMP"], "ai4w_slot_settings.json")
     os.environ["AI4WORD_TEST_SETTINGS"] = slot_path
     try:

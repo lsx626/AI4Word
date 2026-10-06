@@ -458,7 +458,7 @@ def scenario_review_presets_save(window, worker):
         # 「只连 activated」的旧绑定路径，同时消除「再次选同一项」时
         # setCurrentIndex 无信号被静默吞掉的隐患。当前绑定只连
         # currentIndexChanged，activated 无接收端且不改变 currentIndex，
-        # 不会重复投递（tests/test_ui.py 钉死单投递契约）
+        # 不会重复投递（tests/test_ui.py 锁定单投递契约）
         window.preset_combo.setCurrentIndex(idx)
         window.preset_combo.activated.emit(idx)
         check(wait_handled(worker, 60), "预设「%s」应用完成" % name)
@@ -514,7 +514,7 @@ def _patch_doc_vars(worker):
     _read_doc_vars 是只读探针：完成经 DOC_VARS["rsp"] 标志确认，两侧都
     不进 W 的 SENT/DONE（W.wrapped_send 的 _UNCOUNTED 排除表里有它）。
     只一侧计数会造成 SENT/DONE 永久失步：之后每条 wait_handled 都判
-    失败并烧满超时——本场景的 refresh_map 检查曾被这样误报 FAIL。
+    失败并等满超时——本场景的 refresh_map 检查曾被这样误报 FAIL。
     """
     prev = worker._handle
 
@@ -557,7 +557,7 @@ def scenario_doc_persistence(window, worker):
     worker.send("refresh_map")
     # 按命令语义等 refresh_map 自己处理完（不依赖全局 SENT/DONE）：
     # 探针命令若造成全局计数失步，已完成的命令会被误判成「没完成」
-    # 并烧满整个超时——refresh_map 的 FAIL 就是这么来的
+    # 并等满整个超时——refresh_map 的 FAIL 就是这么来的
     check(wait_handled(worker, 60, cmd="refresh_map"),
           "重连装配完成（refresh_map）")
     # 3) 恢复事件与恢复块数（只看本场景窗口，排除首次装配的 restored=0）

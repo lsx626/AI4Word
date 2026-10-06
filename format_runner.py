@@ -6,7 +6,7 @@
 
 安全：AI 生成的代码先过沙箱静态检查（sandbox.check：禁止 import / while /
 with / 双下划线属性 / 危险内建），for 循环注入步数护栏（__guard_step），
-把死循环与危险调用掐死在执行之前 / 可承受范围内。
+在执行前拦下死循环与危险调用。
 """
 import ast
 import time

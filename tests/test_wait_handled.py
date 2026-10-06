@@ -1,19 +1,11 @@
 # -*- coding: utf-8 -*-
-"""离线回归测试：harness 计数（SENT/DONE）与 wait_handled 的语义等待。
+"""离线回归：harness 计数（SENT/DONE）对称性与 wait_handled 的语义等待。
 
-背景（V9.5 deep_test 真机日志，doc_persistence 场景）：refresh_map 的
-「重连装配完成」检查误报 FAIL，而真实链路 2.2 秒就完成了（handle_start
-cmd=refresh_map → load_blocks → word_assembled restored=64）。根因是
-harness 计数失同步——deep_test._patch_doc_vars 的合成命令 _read_doc_vars
-在计数包装之外直接 return（DONE 不 +1），而 wrapped_send 的排除表里没有
-它（SENT 照计），SENT 恒大于 DONE，之后每条 wait_handled 都判失败并烧
-满超时。
-
-本测试在纯离线环境（FakeApp Word + 真实 AgentWorker 线程）按
-deep_test.main() 的装配顺序（patch_handle → _patch_doc_vars）复现整条
-链路：探针 _read_doc_vars 两侧均不计计数、真实命令的 wait_handled 快速
-成功、全局 SENT/DONE 保持对称；并验证 wait_handled(cmd=...) 按命令语义
-等待不受全局失步影响。
+harness 的合成探针命令（如 _read_doc_vars）必须两侧都不计数——
+只计 SENT 不计 DONE 会让 SENT 恒大，之后每条 wait_handled 都误判失败
+并等满超时。本测试在 FakeApp + 真实 AgentWorker 线程上验证：
+探针两侧均不计、真实命令快速等待成功、SENT/DONE 保持对称、
+wait_handled(cmd=...) 按命令语义等待不受全局失步影响。
 """
 import os
 import sys
@@ -137,7 +129,7 @@ def test_read_doc_vars_probe_keeps_counters_balanced():
         ok = W.wait_handled(worker, 30, cmd="refresh_map")
         elapsed = time.time() - t0
         assert ok, "refresh_map 未完成"
-        assert elapsed < 10, "wait_handled 烧满超时 %.1fs" % elapsed
+        assert elapsed < 10, "wait_handled 等满超时 %.1fs" % elapsed
         # 3) 全局计数仍对称（refresh_map 是一条真实命令，两侧各 +1）
         assert W.SENT["n"] == W.DONE["n"] == 2, (W.SENT["n"], W.DONE["n"])
         # 重连装配真的发生：从文档变量恢复出 2 块
@@ -164,7 +156,7 @@ def test_wait_handled_semantic_ignores_global_desync():
         ok = W.wait_handled(worker, 30, cmd="speed")
         elapsed = time.time() - t0
         assert ok, "speed 命令未完成"
-        assert elapsed < 10, "按命令等待烧满超时 %.1fs" % elapsed
+        assert elapsed < 10, "按命令等待等满超时 %.1fs" % elapsed
         # 全局模式此时确实追不平（这正是语义等待存在的理由）
         assert not W.wait_handled(worker, 1), "全局失步时全局模式竟成功"
         assert W.SENT["n"] > W.DONE["n"]
@@ -187,7 +179,7 @@ def test_sync_doc_text_probe_keeps_counters_balanced():
         ok = W.wait_handled(worker, 30)
         elapsed = time.time() - t0
         assert ok, "speed 命令未完成"
-        assert elapsed < 10, "wait_handled 烧满超时 %.1fs" % elapsed
+        assert elapsed < 10, "wait_handled 等满超时 %.1fs" % elapsed
         assert W.SENT["n"] == W.DONE["n"] == 2, (W.SENT["n"], W.DONE["n"])
     finally:
         _finish(worker)

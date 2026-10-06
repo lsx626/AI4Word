@@ -1142,7 +1142,7 @@ def test_code_block_streaming():
     md = "```\nprint(1)\n\n空行在代码块内\n```"
     feed_in_pieces(writer, md, sizes=(2,))
     writer.flush()
-    # 围栏标记绝不能泄漏为正文；代码块内的空行不能把块从中间切断
+    # 围栏标记不能泄漏为正文；代码块内的空行不能把块从中间切断
     assert "```" not in app.doc.content, f"围栏标记泄漏: {app.doc.content!r}"
     assert app.doc.content == "print(1)\r\r空行在代码块内\r", f"内容不符: {app.doc.content!r}"
     b = model.blocks[0]

@@ -14,7 +14,7 @@
 的块并记录 alignment_warning，而不是整体放弃。
 undo() 封装 Word 编辑栈；model_undo/model_redo 是块级快照撤销（整篇重写）。
 事务 begin_txn/commit/rollback_txn 保证多步编辑的原子性；修订模式把 AI 的编辑
-变成 Word 修订（accept/reject 由用户拍板）；块模型可序列化进文档变量（doc.Variables），
+变成 Word 修订（accept/reject 由用户决定）；块模型可序列化进文档变量（doc.Variables），
 重开同一文档即恢复；段落数漂移时 realign_blocks 按文本相似度重对齐；
 insert_toc/set_header/set_footer/insert_page_break 补齐长文档布局能力。
 
@@ -33,8 +33,8 @@ from doc_watch import DocWatch
 WD_NO_HIGHLIGHT = 0
 WD_YELLOW = 7
 RPC_CALL_REJECTED = -2147418111  # Word 忙（重分页/界面刷新）时拒绝调用
-BLOCKS_PROP = "AI4WordBlocks"
-_PROP_CHUNK = 8000                # doc.Variables 单值实测 ≥50000 字符可用，按 8000 字符分片留余量  # 块模型持久化存入的自定义文档属性名
+BLOCKS_PROP = "AI4WordBlocks"    # 块模型持久化存入的自定义文档属性名
+_PROP_CHUNK = 8000               # doc.Variables 单值实测 ≥50000 字符，按 8000 分片留余量
 WD_HEADER_FOOTER_PRIMARY = 1   # wdHeaderFooterPrimary
 WD_PAGE_BREAK = 7              # wdPageBreak
 

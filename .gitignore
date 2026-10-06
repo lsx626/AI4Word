@@ -29,6 +29,7 @@ pytest-cache-files-*/
 _*.py
 _*.txt
 
-# 深度测试运行产物（每轮约 1MB 且可由 tests/deep_test.py 重跑复现；
+# 实验运行产物归档（deep_test / experiment_lab 的 run 日志，可再生；
 # 各槽临时 settings.json 含 API 密钥明文，绝不入库）
+tests/lab_runs/
 tests/deep_runs/

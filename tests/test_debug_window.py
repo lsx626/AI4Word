@@ -20,7 +20,7 @@
 2) app/debug.py：_emit 的秒与毫秒取自同一次时钟读取——原来
    strftime(localtime()) 与 time.time() 是两次独立调用，跨越整秒边界时
    时间戳会倒退最多 1 秒（同样会把事件甩出窗口），这里用确定的
-   「跨秒时钟」复现并钉死。
+   「跨秒时钟」复现并锁定。
 
 三入口均可：
     PYTHONPATH=. python -u tests/run_offline.py
@@ -71,7 +71,7 @@ def _scratch_dir():
 class _ScratchLog:
     """把 debug.log_path() 指向写好 lines 的临时文件；退出还原 _state。
 
-    不 monkeypatch、不 init，绝不碰 %APPDATA%\\AI4Word\\debug.log，用完
+    不 monkeypatch、不 init，不碰 %APPDATA%\\AI4Word\\debug.log，用完
     原样还原（run_offline 顺序加载同进程的其它测试不受影响）。
     """
 

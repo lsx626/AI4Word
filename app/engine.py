@@ -4,7 +4,7 @@
 线程模型：所有 pywin32 调用（GetObject/Dispatch、读写 Selection、
 StreamingWriter、DocModel、run_code）都在本线程内进行——run() 一开始
 CoInitialize，结束时 CoUninitialize。GUI 线程只通过队列下发命令、
-通过 Qt 信号接收状态，绝不直接触碰 COM 对象。
+通过 Qt 信号接收状态，不直接触碰 COM 对象。
 
 命令通过 send() 投递到队列；中断 / 回滚 / 追加补充三个动作要插队，
 直接走专用 _choice_q，覆盖 _wait_choice 的等待。

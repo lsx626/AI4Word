@@ -1,32 +1,16 @@
 # -*- coding: utf-8 -*-
 """离线回归：提交链路的调试事件接线契约。
 
-deep_test 的 compact_send 场景曾把 `write_block` 写进 MUST_EVENTS，但
-紧凑输入框回车提交走的是流式链路：
+流式提交（reset_anchor + feed + flush）发 feed / flush / block_register，
+不发 write_block；write_block 只由外部入口 streaming_writer.write_block()
+（编辑原语 / 存档回写 / 回滚重放）发出。事件名同时属于两条链路，断言
+无法区分来源，因此契约以「MUST 表与实际链路一致」表达。本文件锁定：
 
-    engine.write → writer.feed(piece) / writer.flush()
-                 → _write_top_level → _write_md(keep_anchor=True)
-                 → _BlockDraft.finish → DocModel.register（发 block_register）
+1. 流式提交发 feed/flush/block_register，不发 write_block；
+2. 外部入口 write_block() 发 write_block（落块同样登记 + block_register）；
+3. deep_test.py 的 compact_send MUST 表与真实链路一致。
 
-而 `write_block` 事件只由外部入口 streaming_writer.write_block() 发出
-（编辑原语 replace_block/insert_after/delete_block、存档回写恢复、
-回滚恢复重放）。两条链路井水不犯河水， MUST 表却按外部入口的事件名
-去断言流式链路，于是三个槽全部误报 [MUST 缺失] write_block(0/1)
-（tests/deep_runs/20261005-211342 的 triage）。
-
-修复选择「改 MUST、不碰接线」（避免 write_block 事件名二义：既是外部
-入口又是落块，断言与 triage 都无法区分来源）。本文件把接线契约钉死：
-
-1. 流式提交（reset_anchor + feed + flush）必须发 feed/flush/block_register，
-   绝不发 write_block；
-2. 外部入口 write_block() 必须发 write_block 事件（落块同样登记，
-   也带 block_register）；
-3. deep_test.py 里 compact_send 的 MUST 表必须与真实提交链路一致
-   （要 feed/flush/block_register/write_done，不要 write_block）。
-
-今后若有人改接线（让流式也打 write_block），第 1/2 条先红，提醒同步改
-MUST 表与本测试；若有人只改 MUST 表，第 3 条把契约按住，防止回退到
-曾经的错配。
+改接线或改 MUST 表时本文件先行失败，提醒两者同步。
 """
 import ast
 import contextlib

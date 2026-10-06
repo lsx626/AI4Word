@@ -117,7 +117,7 @@ def ai_stream(prompt, api_key, system_prompt, model=DEFAULT_MODEL, connect=10, r
     生成结束自然 return；网络或 HTTP 错误时**抛出异常**——吞掉只 print 的
     话，窗口化打包的 GUI 里用户对失败一无所知（引擎会 catch 并提示）。
     连接级故障（TLS 握手中断/连接重置等）在尚未产出任何内容时会自动重试，
-    最多 attempts 次；已在流的中途则绝不重试，避免内容重复。
+    最多 attempts 次；已在流的中途则不重试，避免内容重复。
     """
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
     data = {

@@ -1,22 +1,11 @@
 # -*- coding: utf-8 -*-
 """回归：deep_test 的 esc_hide_hint MUST 表必须等于场景实际产出。
 
-2026-10-05 真机 slot1 发现的规格错配：deep_test 的 esc_hide_hint MUST 写
-hide_via_esc=2，但场景 esc_hide_and_hint 只产生 1 次——第一下 Esc 由展开态
-收起（main_window.keyPressEvent 在展开态走 _apply_expanded，不打日志），
-第二下 Esc 才隐藏（app/main_window.py 的 keyPressEvent -> debug.log(
-"hide_via_esc")，恰好 1 条）。MUST 检查把这条纯规格错配报成
-「hide_via_esc(1/2) 缺失」。
-
-本测试从两侧把不变量锁住：
-- app 层：复现场景的按键序列，断言 hide_via_esc 恰好 1 条
-  （首下 Esc 收起 = 0 条，第二下 Esc 隐藏 = 1 条，summon 不再增加）。
-- spec 层：重放 debug_walkthrough.esc_hide_and_hint 真实场景，把产出的事件
-  数与 tests/deep_test.py 场景清单里的 MUST 表对比，不一致即失败。
-
-deep_test.py 本身不能 import（导入即锁定 QT_QPA_PLATFORM=windows 并向
-sys.argv 追加 -debug，会污染同一进程里的离线套件），MUST 表只做 ast 只读
-抽取。
+场景里第一下 Esc 由展开态收起（不打日志），第二下 Esc 才隐藏
+（hide_via_esc 恰好 1 条）；spec 曾写 2，MUST 检查把规格错配报成缺失。
+两侧锁定：app 层断言按键序列恰好产出 1 条；spec 层重放场景、
+用 ast 只读抽取 deep_test 的 MUST 表对比（deep_test.py 不能 import：
+导入即锁定真实平台并追加 -debug，会污染离线套件）。
 """
 import ast
 import os

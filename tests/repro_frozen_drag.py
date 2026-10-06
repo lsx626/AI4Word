@@ -1,20 +1,20 @@
 # -*- coding: utf-8 -*-
-"""驱动 frozen 窗口化 AI4Word.exe，复现「输出中拖动/大/小化窗口 -> 闪退」。
+"""驱动窗口化 AI4Word，复现「输出中拖动 / 大 / 小化窗口 -> 闪退」。
 
 用法（仓库根目录）：
     .venv/python.exe -u tests/repro_frozen_drag.py [old|new|olddev|newdev]
-      old     -> D:\\Program Files\\AI4Word\\AI4Word.exe（用户实际在跑的安装版 9.2）
-      new     -> dist\\AI4Word\\AI4Word.exe（当前代码打包）
-      olddev  -> git worktree 的 v9.2 源码，控制台 python 跑（traceback 可见）
-                 需先 git worktree add D:\\Projects\\AI4Word-92 v9.2
+      old     -> D:\\Program Files\\AI4Word\\AI4Word.exe（安装版）
+      new     -> dist\\AI4Word\\AI4Word.exe（需先跑 build\\build.py 打包）
+      olddev  -> git worktree 的旧版源码，控制台 python 跑
+                 （先 git worktree add D:\\Projects\\AI4Word-92 v9.2）
       newdev  -> 当前仓库源码，控制台 python 跑
     不传参数默认 new
 
 为什么这样驱动：窗口化 PyInstaller 应用的 C 层 fprintf(stderr) 在控制台看不到，
-但继承的文件句柄照样能收到 -> 启动子进程时把 stdout/stderr 重定向到日志。
-交互全部用真实 SendInput（Ctrl+Alt+Space 召唤 -> 输入英文写作 -> Enter ->
-写作进行中按住头像拖窗口 / 点头像展开收起 / WIN+D 最小化还原），
-完全按用户的真实操作路径（头像是拖动柄，点头像是展开/收起 = 大/小化）。
+但继承的文件句柄照常收到 -> 子进程的 stdout/stderr 重定向到日志。
+交互全部用真实 SendInput（Ctrl+Alt+Space 召唤 -> 写作 -> Enter ->
+写作进行中按住头像拖窗口 / 点头像展开收起 / WIN+D），即用户的真实操作路径
+（头像是拖动柄，点头像是展开 / 收起）。
 """
 import ctypes
 import os
@@ -201,7 +201,7 @@ def main():
         if _qshm_probe:
             _ct.windll.kernel32.CloseHandle(_qshm_probe)
         if already:
-            p("[repro] !!! AI4Word 单实例锁已被占用：请先退出正在运行的 AI4Word")
+            p("[repro] AI4Word 单实例锁已被占用：请先退出正在运行的 AI4Word")
             return 5
     except Exception as e:
         p("[repro] 单实例探测异常（继续）: %s" % e)
@@ -282,7 +282,7 @@ def main():
             mouse_button(True)
             for k in range(5):
                 if proc.poll() is not None:
-                    p("[repro] !!! 拖动中进程死亡")
+                    p("[repro] 拖动中进程死亡")
                     phase = "died-in-avatar-drag r%d step %d" % (cycle, k)
                     break
                 mouse_at(ax + 45 * (k + 1), ay + 22 * (k + 1))
@@ -327,7 +327,7 @@ def main():
             do_key(VK_LWIN, VK_D)
             time.sleep(0.6)
             if proc.poll() is not None:
-                p("[repro] !!! WIN+D 后进程死亡")
+                p("[repro] WIN+D 后进程死亡")
                 phase = "died-in-win+d r%d" % cycle
                 break
             do_key(VK_LWIN, VK_D)

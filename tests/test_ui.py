@@ -66,7 +66,7 @@ def test_preset_combo_programmatic_selection_applies_preset():
     弹窗选择时触发，setCurrentIndex 改选永不触发，_on_preset 被静默跳过
     （组合框不复位、preset 命令不投递），deep_test review_presets_save 的
     preset_selected/preset_applied 缺失与「应用后组合框复位 ×4 FAIL」即此根因。
-    同时钉死三条约束：复位回充与占位项不重复投递；真实键盘改选只投递一次
+    同时锁定三条约束：复位回充与占位项不重复投递；真实键盘改选只投递一次
     （activated 与 currentIndexChanged 不可并存，否则用户选择会双次投递）；
     生成中改选被拒绝且不投递。
     """

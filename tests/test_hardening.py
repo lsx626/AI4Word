@@ -77,7 +77,7 @@ def test_guard_steps_shared():
     t0 = time.time()
     ok, err = run_code(code, g)
     _check(not ok and "上限" in (err or ""), f"应触发步数上限（实际 ok={ok}, err={err}）")
-    _check(time.time() - t0 < 3.0, "两条 3 万次循环应快速被守卫掐死")
+    _check(time.time() - t0 < 3.0, "两条 3 万次循环应快速被守卫终止")
 
 
 if __name__ == "__main__":

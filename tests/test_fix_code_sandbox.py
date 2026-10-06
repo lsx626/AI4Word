@@ -1,29 +1,14 @@
 # -*- coding: utf-8 -*-
-"""离线回归：自我修复链路必须能收敛回 arrange_applied。
+"""离线回归：自我修复链路必须收敛回 arrange_applied。
 
-事故重放（tests/deep_runs 真机日志）：注入 1/0 故障后，fix_code 返回的
-修复代码以 `import win32com.client as win32` 开头，被沙箱判
-「禁止的语句: Import」（run_code2 ok=false）-> arrange_failed，
-arrange_applied 从此再不出现。根因不是沙箱（它判得对），而是 fix_code
-的提示词没有沙箱禁令清单，修复代码结构性不可能过沙箱。这里验证：
-1. fix_code 提示词携带禁令清单（import / while / with / 双下划线 / 危险内建）；
-2. 修复代码撞沙箱时，SandboxError 文案与被拒代码写回下一轮提示词重修；
-3. 重修次数有上限，超过后原样交回执行层（run_code2 仍报精确错）；
-4. 引擎级全链路：gen 故障 -> fix 撞沙箱 -> 重修成功 -> arrange_applied。
-5. 修复成功分支的 arrange_applied 必须真正落盘进 debug.log：真机事故
-   （20261005-213146 / 230853 / 231023 / 231406 连续 4 轮 slot2 的
-   MUST 缺失）里 _cmd_arrange 的 if ok2: 分支只发用户消息、漏发终态
-   事件；旧离线断言只检查消息文本，缺口在离线下永远看不到。这里开启
-   真实调试日志并读文件（不是打桩 debug.log 调用），把接线锁死。
-6. 符号契约（CODEGEN_SYSTEM 同源）：20261005-234719 slot2 与
-   20261005-231023 slot0 的修复代码虽然过了沙箱却在运行时死掉——
-   `for b in block_map(): b.get('type')`（block_map() 返回多行字符串，
-   迭代出字符 -> AttributeError: 'str' object has no attribute 'get'）
-   与 `doc.Styles("Heading 1")`（中文 Word 报「集合所要求的成员不存在」）。
-   根因是修复提示词不含 gen_code 的 API 契约，模型只能猜 API 形状；
-   且静态沙箱看不出这类错（事故代码合法），唯一防线就是提示词本身。
-   这里锁死两件事：修复提示词携带契约，且契约与运行时真相一致
-   （block_map() 真返字符串、行格式真是 `[索引] 类型: 预览`）。
+锁定的契约：
+1. fix_code 提示词携带沙箱禁令清单（import / while / with / 双下划线 / 危险内建）；
+2. 修复代码被沙箱拒绝时，SandboxError 文案与被拒代码写回下一轮提示词重修；
+3. 重修有上限，超过后原样交回执行层（run_code2 仍报精确错）；
+4. 引擎级全链路：gen 故障 -> fix 被沙箱拒绝 -> 重修成功 -> arrange_applied；
+5. 修复成功分支的 arrange_applied 真正落盘进 debug.log（读文件验证，不打桩）；
+6. 提示词携带 gen_code 的 API 契约，且与实现一致
+   （block_map() 返回字符串、行格式 `[索引] 类型: 预览`）。
 """
 import ast
 import importlib.util
@@ -65,7 +50,7 @@ def test_prompt_carries_sandbox_rules():
                     sink=sink_out.append)
     assert code == "insert_at_end('修复正文')", code
     system = calls[0]["system"]
-    # 禁令清单来自 sandbox.py 的实际禁令（单一真相源），不能各写一份
+    # 禁令清单来自 sandbox.py 的实际禁令（单一来源），不能各写一份
     assert SANDBOX_RULES_TEXT in system
     for word in ("import", "while", "with", "双下划线", "只输出纯 Python"):
         assert word in system, word
@@ -83,13 +68,13 @@ def test_repair_hitting_sandbox_gets_retried_with_reason():
                     "ZeroDivisionError: division by zero", "key",
                     sink=sink_out.append)
     assert code == "insert_at_end('修复正文')", code
-    assert len(calls) == 2, len(calls)  # 撞沙箱 -> 重修一次，不多打
+    assert len(calls) == 2, len(calls)  # 被沙箱拒绝 -> 重修一次
     system2 = calls[1]["system"]
     # SandboxError 文案与被拒代码都写回下一轮
     assert "SandboxError" in system2 and "禁止的语句: Import" in system2
     assert bad in system2
     assert any("未通过预检" in t for t in sink_out)
-    print("ok: 修复代码撞沙箱后带 SandboxError 文案与被拒代码重修")
+    print("ok: 修复代码被沙箱拒绝后带 SandboxError 文案与被拒代码重修")
 
 
 def test_syntax_error_repair_also_retried():
@@ -132,14 +117,14 @@ def test_prompt_carries_codegen_contract():
     真机事故（20261005-234719 slot2 / 20261005-231023 slot0）里修复模型
     猜 API 形状：把 block_map() 返回的多行字符串当字典列表迭代、用
     样式名字符串取样式。根因是修复提示词不含 gen_code 所用的符号契约
-    —— 这里锁死契约随修复提示词下发，且与 gen_code 是同一份
+    —— 这里锁定契约随修复提示词下发，且与 gen_code 是同一份
     （CODEGEN_SYSTEM 本体，不是手抄的第二份，避免漂移）。
     """
     calls = _patch_ai(["insert_at_end('修复正文')"])
     fix_code("把所有一级标题加粗", _INCIDENT_CODE, _INCIDENT_ERR, "key",
              block_map_fn=lambda: "[0] heading1: 一级标题\n[1] para: 正文")
     system = calls[0]["system"]
-    # 契约是 CODEGEN_SYSTEM 本体（单一真相源），不是另写一份
+    # 契约是 CODEGEN_SYSTEM 本体（单一来源），不是另写一份
     assert system.startswith(CODEGEN_SYSTEM), "修复提示词未以 CODEGEN_SYSTEM 为前缀"
     # 契约的关键符号都在：块原语签名 / 常量 / 三大黄金法则
     for sym in ("block_map():", "get_block_text(i)", "replace_block(i, new_md)",
@@ -158,39 +143,37 @@ def test_prompt_carries_codegen_contract():
 
 
 def test_prompt_contract_matches_real_block_map():
-    """契约必须与运行时真相一致：block_map() 真返多行字符串。
+    """契约与实现必须一致：block_map() 返回多行字符串。
 
-    双向锁死：提示词说「每行 `[索引] 类型: 内容预览` 的多行字符串」，
-    真实的 DocModel.block_map() 就必须真是这个形状；任何一侧漂移
-    （比如哪天 block_map 改返字典列表）都会让另一侧的契约变成谎言，
-    修复模型照提示词写必定运行时炸 —— 这里的断言让漂移当场失败。
-    同时重演事故代码本身：静态沙箱判不出（合法的 for + 属性访问），
-    只有运行时才暴露 AttributeError —— 说明这条防线只能在提示词层。
-    """
+    提示词声明 block_map() 返回「每行 `[索引] 类型: 内容预览` 的多行
+    字符串」；若实现改变形状（如改为字典列表），按提示词生成的修复
+    代码会在运行时报错——这些断言让形状漂移及时暴露。事故代码本身
+    能通过静态沙箱（合法的 for + 属性访问），只有运行时才暴露
+    AttributeError，说明这条防线只能在提示词层。"""
     app, _writer, model = _fake.make()
     model.insert_at_end("# 一级标题\n\n正文段落\n\n## 二级标题")
     bm = model.block_map()
-    # 真相侧：返回值就是字符串本体，不是字典/列表
+    # 实现侧：返回值是字符串本体，不是字典 / 列表
     assert isinstance(bm, str), type(bm)
     lines = [ln for ln in bm.splitlines() if ln and not ln.startswith("[!]")]
     assert lines, bm
-    # 每行格式真是 `[索引] 类型: 预览`，索引从 0 开始连续
+    # 每行格式为 `[索引] 类型: 预览`，索引从 0 连续
     for ln in lines:
         assert re.match(r"^\[\d+\] \S.*: ", ln), ln
     assert lines[0].startswith("[0] "), lines[0]
     kinds = {ln.split("] ", 1)[1].split(": ", 1)[0] for ln in lines}
     assert "heading1" in kinds, kinds
-    # 事故代码静态过沙箱（for + .get 都合法）—— 防线不在沙箱层
+    # 事故代码能通过静态沙箱（for + .get 均合法），防线只能在提示词层
     assert _static_reject_reason(_INCIDENT_CODE) is None
-    # 运行时确实炸 AttributeError：这正是提示词必须警示的失败形态
+    # 运行时抛 AttributeError：这正是提示词必须警示的失败形态
     try:
         exec(compile(ast.parse(_INCIDENT_CODE), "<incident>", "exec"),
              {"block_map": model.block_map})
     except AttributeError as e:
         assert "get" in str(e), e
     else:
-        raise AssertionError("事故代码竟未复现 AttributeError——block_map 形状已漂移")
-    # 契约侧：提示词对形状的描述与上面验证的真相一致
+        raise AssertionError("事故代码未复现 AttributeError——block_map 形状已漂移")
+    # 提示词侧：对形状的描述与上面验证的实现一致
     calls = _patch_ai(["insert_at_end('修复正文')"])
     fix_code("排版", _INCIDENT_CODE, _INCIDENT_ERR, "key",
              block_map_fn=model.block_map)
@@ -198,7 +181,8 @@ def test_prompt_contract_matches_real_block_map():
     assert "多行字符串" in system
     assert "每行 `[索引] 类型: 内容预览`" in system
     assert model.block_map() in system, "修复提示词未携带当前 block_map 原文"
-    print("ok: 契约与真相一致——block_map() 返回多行字符串，事故代码运行时炸 AttributeError（静态沙箱看不出）")
+    print("ok: 契约与实现一致——block_map() 返回多行字符串，"
+          "事故代码运行时抛 AttributeError（静态沙箱判不出）")
 
 
 # ---------- 引擎级：事故全链路重放 ----------
@@ -309,7 +293,7 @@ def _capture_debug_log(monkeypatch):
     真实文件而不是打桩 debug.log 调用——离线必须覆盖到「事件真的落盘」。
 
     必须在 worker 线程第一次 debug.log 之前完成 init：is_debug() 的自动
-    检测按真实 sys.argv 走，会先把调试模式锁死为 False，幂等的 init()
+    检测按真实 sys.argv 走，会先把调试模式固定为 False，幂等的 init()
     之后就再也开不进来。hooks 预置为 True，避免本测试改动进程级的
     sys.excepthook / threading.excepthook。
     """
@@ -384,7 +368,7 @@ def test_arrange_converges_after_sandbox_rejected_repair(monkeypatch):
         assert "arrange_failed" not in events, events
     finally:
         _finish(worker)
-    print("ok: 引擎级全链路 gen 故障 -> 修复撞沙箱 -> 重修 -> arrange_applied 落盘 1 条，无 arrange_failed")
+    print("ok: 引擎级全链路 gen 故障 -> 修复被拒 -> 重修 -> arrange_applied 落盘 1 条，无 arrange_failed")
 
 
 class _Patch:

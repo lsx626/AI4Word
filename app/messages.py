@@ -49,7 +49,7 @@ _KIND_COLOR = {
 
 
 class _WrapLabel(QLabel):
-    """自动换行富文本标签：高度由实际宽度 + 文本确定，绝不截断。
+    """自动换行富文本标签：高度由实际宽度 + 文本确定，不截断。
 
     QLineEdit 式的实时追加（stream_append）依赖每次 setText 及宽度变化
     时重新计算 minimumHeight；QLabel 自带的 heightForWidth 在流式场景
@@ -172,7 +172,7 @@ class MessageList(QScrollArea):
         if self._streaming is not None:
             self._streaming.append_text(piece)
             # 用户上滚阅读历史时不要把视图拽回底部（每个 chunk 都拽一次
-            # 根本没法看）；生成结束（end_stream）再回到底部
+            # 无法阅读）；生成结束（end_stream）再回到底部
             if self._at_bottom():
                 self._scroll_bottom()
 

@@ -1,23 +1,14 @@
 # -*- coding: utf-8 -*-
-"""离线回归：预设驱动的选中路径必须在两种绑定下都投递恰好一条命令。
+"""离线回归：预设选中路径在两种信号绑定下都恰好投递一条 preset 命令。
 
-事故重放（deep_test review_presets_save）：场景驱动用
-`preset_combo.setCurrentIndex(idx)`，而 MainWindow 曾把 _on_preset 连在
-QComboBox.activated 上——该信号只在用户真实弹窗/键盘选择时触发，
-setCurrentIndex 永远不发它（PySide6 6.11.0 实测确认），_on_preset 被
-静默跳过：组合框不复位、preset 命令不投递，四个预设全部报
-preset_selected/preset_applied(0/4)，wait_handled 空转并把缺事件掩盖成
-「命令未处理完成」。
-
-修复后的契约（本文件钉死）：
-1. 驱动侧（deep_test 场景与压测同款代码）：setCurrentIndex 之后追补
-   activated.emit(idx)——当前绑定（currentIndexChanged）下 activated 无
-   接收端、且 emit 不改变 currentIndex，不产生第二条命令；万一绑定被
-   改回 activated-only，驱动仍照常选中；
-2. 应用侧：四个预设每个恰好投递一条 preset 命令、组合框复位到占位项、
-   引擎处理完打出 preset_applied（即 deep_test MUST 里 4/4 的来源）；
-3. 重复选同一项（currentIndex 未变、setCurrentIndex 无信号）也必须
-   投递——activated.emit 兜底，wait_handled 不烧超时。
+setCurrentIndex 不触发 QComboBox.activated——若 _on_preset 只接 activated，
+程序化选中会被静默跳过。锁定：
+1. 驱动侧 setCurrentIndex 后追补 activated.emit(idx)：当前绑定
+   （currentIndexChanged）下无接收端、emit 不改 currentIndex、不重复投递；
+   万一绑定改回 activated-only，驱动仍照常选中；
+2. 应用侧四个预设各投递恰好一条 preset 命令、组合框复位到占位项、
+   引擎处理完打 preset_applied；
+3. 重复选同一项（currentIndex 未变）也投递，wait_handled 不会等至超时。
 """
 import os
 import sys

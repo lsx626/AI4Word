@@ -10,7 +10,7 @@ run_code 直接执行 LLM 生成的 Python，逐语句可视化只能"看见"它
    调用、有限 for 循环）不受影响。
 2. 循环护栏 instrument()：给每个 for 循环体头部注入步数计数调用，
    run_code 注入的 __guard_step 共享同一个计数器，总步数超限时抛
-   SandboxError，把死循环掐死在可承受的范围内。
+   SandboxError，把死循环限制在可承受步数内。
 """
 import ast
 
@@ -70,7 +70,7 @@ SANDBOX_RULES_TEXT = (
     "- 禁止调用这些内建/名字：" + "、".join(sorted(BANNED_NAMES)) + "\n"
     "- 禁止调用这些 COM 成员：" + "、".join(sorted(BANNED_ATTRS)) + "\n"
     "- for 循环总步数上限 " + str(MAX_STEPS)
-    + "（排版脚本足够；死循环会被掐死）\n"
+    + "（排版脚本足够；死循环会被步数上限终止）\n"
     "- 只输出纯 Python 代码：不写 import、不定义函数/类、不重新声明"
     " word_app/doc/sel，不加任何 Markdown 标记或解释文字"
 )
