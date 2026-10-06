@@ -85,6 +85,17 @@ def init(argv=None):
             _state["failed"] = True
         else:
             _state["path"] = os.path.join(d, "debug.log")
+            # 环境变量出口：并行测试槽等场景需要各自的日志文件，避免
+            # 多进程共用 %APPDATA%\AI4Word\debug.log 互相覆盖/抢占滚动。
+            # 未设置时行为与原来完全一致。
+            env_path = os.environ.get("AI4WORD_DEBUG_LOG")
+            if env_path:
+                try:
+                    parent = os.path.dirname(os.path.abspath(env_path)) or "."
+                    os.makedirs(parent, exist_ok=True)
+                    _state["path"] = env_path
+                except OSError:
+                    pass
         _install_hooks()
         _write_header()
         return True
@@ -134,8 +145,14 @@ def _emit(level, event, fields, full=False):
     path = _state["path"]
     if path is None:
         return
-    now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-    ms = int((time.time() % 1.0) * 1000)
+    # 秒部分与毫秒部分必须取自同一次时钟读取：原来 strftime(localtime())
+    # 与 time.time() 是两次独立调用，若期间跨越整秒边界，写出的时间戳
+    # 会倒退最多 1 秒（如 14:32:14.9999 的秒 + 15 秒的毫秒归零），
+    # 日志事件因此落到时间窗之外（deep_test 会判定 MUST 事件缺失）。
+    now = time.time()
+    now_s = int(now)
+    ms = int((now - now_s) * 1000)       # 截断到毫秒，与下方秒部分同源
+    now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now_s))
     thread = threading.current_thread().name
     line = "%s.%03d [%s] %s %s" % (now, ms, thread, level, event)
     if fields:

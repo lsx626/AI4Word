@@ -4,8 +4,11 @@
 CLI（main.py）与 GUI（app/engine.py）共用这一层，保证两端的代码生成
 提示词、沙箱执行与可用符号表完全一致。
 """
+import ast
+
 import win32com.client
 
+from sandbox import SANDBOX_RULES_TEXT, SandboxError, check as sandbox_check
 from styles import apply_preset, preset_names
 
 # --- Word COM 常量 ---
@@ -147,12 +150,49 @@ def gen_code(prompt, api_key, session=None, block_map_fn=None, sink=print, model
     return code
 
 
+def _static_reject_reason(code):
+    """修复代码若连静态检查都过不了，返回拒绝原因（可过则返回 None）。
+
+    run_code 对同一段代码只会判一次死刑：沙箱/语法错误直接 arrange_failed，
+    没有下一轮。fix_code 在交回执行层之前先用这里把「必死」的修复代码
+    挡下，交给重修循环带理由再问 AI 一遍。
+    """
+    try:
+        sandbox_check(ast.parse(code))
+    except SyntaxError as e:
+        return f"SyntaxError: {e}"
+    except SandboxError as e:
+        return f"SandboxError: {e}"
+    return None
+
+
+# 修复代码再撞沙箱/语法错误时，带拒绝理由重修的最大次数；加上首次
+# 尝试共 FIX_MAX_SANDBOX_RETRIES + 1 轮 AI 请求。仍过不了就按原样交回
+# 执行层，由 run_code2 报精确错（arrange_failed 的 err 有判罚依据）。
+FIX_MAX_SANDBOX_RETRIES = 2
+
+
 def fix_code(prompt, failed_code, error_msg, api_key, session=None, sink=print,
              block_map_fn=None, model=None):
     """执行失败后，让 AI 根据错误信息重新生成一段不同思路的代码。
 
     修正代码必须看到「当前」文档结构：失败的那轮可能已经改了一半文档，
     按原始指令臆测索引会错上加错。
+
+    修复提示词以 CODEGEN_SYSTEM 为前缀：修复模型与首轮 gen_code 共享同一份
+    符号契约（块原语签名、block_map() 的返回形状、WD_STYLE_* 数字常量、
+    三大黄金法则）。真机事故（20261005-234719 slot2 等）里不带这份契约，
+    修复模型只能猜 API 形状，产出 `for b in block_map(): b.get('type')`
+    （block_map() 返回多行字符串，迭代出字符 -> AttributeError）或
+    `doc.Styles("Heading 1")`（中文 Word 报「集合所要求的成员不存在」），
+    真实失败使 MUST arrange_applied 永久缺失——只补接线挡不住这类根因。
+
+    提示词还携带沙箱禁令清单（与 gen_code 的 CODEGEN_SYSTEM 同源），
+    并且修复代码在交给执行层之前先过一遍 sandbox.check：命中禁令
+    （真机日志里最常见的正是 `import win32com.client` -> 「禁止的
+    语句: Import」）就把 SandboxError 文案与被拒代码写回提示词重修一轮，
+    而不是交给 run_code 判死刑——那段路径只有一次机会，失败即
+    arrange_failed，自我修复链路再也回不到 arrange_applied。
     """
     from ai_client import ai_request
 
@@ -166,8 +206,27 @@ def fix_code(prompt, failed_code, error_msg, api_key, session=None, sink=print,
             structure = block_map_fn()
         except Exception:
             pass
-    system_prompt = f"""
-你是顶级的 Python 调试专家，专精于 pywin32 的 Word 自动化。
+    rejects = []  # [(被拒修复代码, 拒绝原因)]，逐轮写回提示词让 AI 避开
+    attempt = 0
+    sink("\n代码执行失败，正在请求 AI 自我修复...")
+    while True:
+        attempt += 1
+        reject_block = ""
+        if rejects:
+            last_code, last_err = rejects[-1]
+            reject_block = f"""
+--- 上一次修正代码被沙箱拒绝，没有执行 ---
+{last_code}
+--- END ---
+拒绝原因：`{last_err}`。这一版必须避开这条禁令（对照下面的沙箱禁令清单），
+换一种不依赖被禁语句/内建的等价写法。
+"""
+        # CODEGEN_SYSTEM 不能插进 f-string：它含字面花括号
+        # （apply_edit 的 spec = {"op": ...}），嵌入会被当成表达式求值。
+        # 直接拼接，保证修复模型与首轮 gen_code 看到同一份符号契约。
+        failure_context = f"""
+**修复任务上下文**
+
 为了完成用户指令「{prompt}」，之前运行了如下代码：
 --- FAILED CODE ---
 {failed_code}
@@ -179,22 +238,39 @@ def fix_code(prompt, failed_code, error_msg, api_key, session=None, sink=print,
 {structure}
 --- END CURRENT BLOCK MAP ---
 请以这个结构为准定位索引，不要按旧结构臆测。
+再强调契约里最容易被忽略的两条（真机事故复盘，照着写必错）：
+- `block_map()` 返回值**就是多行字符串本身**（每行 `[索引] 类型: 内容预览`），
+  不是字典、也不是字典列表：写 `for b in block_map()` 迭代出的是单个字符，
+  `b.get(...)` / `b["type"]` 必然报错。要按索引定位块就直接用整数下标
+  调块原语，要取某块文本就用 `get_block_text(i)`。
+- 样式只能用数字常量取：`doc.Styles(WD_STYLE_HEADING_1)`（即 -2）等；
+  `doc.Styles("Heading 1")` 依赖界面语言，中文 Word 会报
+  「集合所要求的成员不存在」。
 
+{SANDBOX_RULES_TEXT}{reject_block}
 你的任务：
 1. 分析失败原因。
 2. 用一种**全新的、不同的方法**完成原始指令（例如样式设置失败就改用块函数或反之）。
-3. 只输出修正后的完整 Python 代码片段；内容编辑优先使用块函数
+3. 只输出修正后的完整 Python 代码片段；内容编辑必须使用块函数
    (replace_block/insert_after/delete_block/replace_text 等，通过 block_map() 的索引定位)，
-   格式修改继续通过修改样式定义完成。
+   格式修改必须通过修改样式定义完成（`doc.Styles(WD_STYLE_常量)`）。
 4. 不要自己处理异常（PageSetup 除外）；不要输出任何解释文字。
 """
-    sink("\n代码执行失败，正在请求 AI 自我修复...")
-    raw = ai_request(prompt, api_key, system_prompt, model=model)
-    if not raw:
-        return None
-    code = clean_code(raw)
-    sink("AI 生成的修正代码:\n---\n" + code + "\n---")
-    return code
+        system_prompt = CODEGEN_SYSTEM + failure_context
+        if attempt > 1:
+            sink(f"上一版修正代码未通过预检（{rejects[-1][1]}），带禁区清单重修（第 {attempt} 次尝试）...")
+        raw = ai_request(prompt, api_key, system_prompt, model=model)
+        if not raw:
+            return None
+        code = clean_code(raw)
+        sink("AI 生成的修正代码:\n---\n" + code + "\n---")
+        # 静态拦截发生在执行之前，文档未被这版修复代码动过，
+        # 上面取的 block_map 仍然有效，不必重取
+        reject_reason = _static_reject_reason(code)
+        if reject_reason and attempt <= FIX_MAX_SANDBOX_RETRIES:
+            rejects.append((code, reject_reason))
+            continue
+        return code
 
 
 def build_exec_globals(app, doc, sel, model, writer, session):

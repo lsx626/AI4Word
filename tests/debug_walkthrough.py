@@ -44,9 +44,24 @@ DEBUG_MODE = "-debug" in sys.argv or "--debug" in sys.argv
 
 FAIL = []
 PLATFORM = []
-DONE = {"n": 0}  # worker 已处理完毕的命令计数
-SENT = {"n": 0}  # send-side counter, races DONE; see wait_handled
+DONE = {"n": 0, "per_cmd": {}}  # worker 已处理完毕的命令计数（全局 + 按命令）
+SENT = {"n": 0, "per_cmd": {}}  # 发送侧计数，与 DONE 竞态；见 wait_handled
 CHARS = {"n": 0}  # chars delivered via worker.streamChunk
+
+# 不计入 SENT/DONE 的命令（两侧必须对称排除）：
+# - quit：run() 循环直接拦截，根本不走 _handle，DONE 侧永远没有对应项；
+# - _sync_doc_text / _read_doc_vars：只读探针，完成经各自的 rsp 标志确认
+#   （DOC_BOX / deep_test.DOC_VARS），从不进 wait_handled 的等待。
+# 一侧计、另一侧不计会让 SENT/DONE 永久失步，之后每条 wait_handled 都
+# 误判失败并烧满超时（V9.5 真机日志里 doc_persistence 的 refresh_map
+# 就是被 _read_doc_vars 这样失步误报 FAIL 的）。
+_UNCOUNTED = frozenset({"_sync_doc_text", "_read_doc_vars", "quit"})
+
+
+def _bump(counter, cmd):
+    """全局 + 按命令各 +1：wait_handled 的语义等待需要按命令的计数。"""
+    counter["n"] += 1
+    counter["per_cmd"][cmd] = counter["per_cmd"].get(cmd, 0) + 1
 
 
 def check(cond, msg):
@@ -146,12 +161,12 @@ def patch_handle(worker):
             worker._exec_globals = None
             S["doc"] = None
             gc.collect()
-            DONE["n"] += 1  # real command: let close_word's wait_handled see it
+            _bump(DONE, cmd)  # real command: let close_word's wait_handled see it
             return
         try:
             orig(cmd, payload)
         finally:
-            DONE["n"] += 1
+            _bump(DONE, cmd)
 
     worker._handle = wrapped
     # count sends on the way in so wait_handled cannot miss a
@@ -160,17 +175,29 @@ def patch_handle(worker):
     orig_send = worker.send
 
     def wrapped_send(cmd, payload=None):
-        if cmd not in ("_sync_doc_text", "quit"):
-            # _sync_doc_text never increments DONE either; it
-            # is tracked through the DOC_BOX rsp flag instead
-            SENT["n"] += 1
+        if cmd not in _UNCOUNTED:
+            # _sync_doc_text / _read_doc_vars never increments DONE either;
+            # they are tracked through their own rsp flags instead
+            _bump(SENT, cmd)
         return orig_send(cmd, payload)
 
     worker.send = wrapped_send
 
 
-def wait_handled(worker, timeout=180):
-    """等最近一条 send 出的命令处理完毕（send 之后调用）。"""
+def wait_handled(worker, timeout=180, cmd=None):
+    """等最近一条 send 出的命令处理完毕（send 之后调用）。
+
+    默认按全局 SENT/DONE 计数等；给出 cmd 时按命令语义等——只看该命令
+    自己的发送/处理计数。后者不受探针命令（_sync_doc_text /
+    _read_doc_vars 等两侧对称排除、或任何原因造成的全局失步）影响：
+    一条已处理完的命令不会因为全局计数追不平而被误判成「没完成」、
+    白白烧满整个超时。
+    """
+    if cmd is not None:
+        target = SENT["per_cmd"].get(cmd, 0)
+        ok = wait_for(lambda: DONE["per_cmd"].get(cmd, 0) >= target, timeout)
+        pump(0.2)
+        return ok
     target = SENT["n"]
     ok = wait_for(lambda: DONE["n"] >= target, timeout)
     pump(0.2)
@@ -234,12 +261,20 @@ S = {"worker": None, "window": None, "tray": None, "settings": None,
 
 def make_word():
     """worker 线程内调用的 Word 工厂：附加已运行的 Word 或启动新的，
-    无论哪种都新建一个空文档并激活，保证引擎绑定到它而非用户的活动文档。"""
+    无论哪种都新建一个空文档并激活，保证引擎绑定到它而非用户的活动文档。
+
+    环境变量 AI4WORD_TEST_FORCE_NEW_WORD=1 时跳过 GetObject 附加、直接
+    Dispatch 新开一个 Word 实例：并行测试槽必须这样，否则所有槽都会附加
+    到同一个 Word 进程的同一个 ActiveDocument，互相写进同一篇文档。
+    单进程模式不设此变量，行为不变（优先附加用户已开的 Word）。"""
     app = None
-    try:
-        app = win32com.client.GetObject(None, "Word.Application")
-        print("    (已附加到运行中的 Word)")
-    except Exception:
+    if not os.environ.get("AI4WORD_TEST_FORCE_NEW_WORD"):
+        try:
+            app = win32com.client.GetObject(None, "Word.Application")
+            print("    (已附加到运行中的 Word)")
+        except Exception:
+            app = None
+    if app is None:
         app = win32com.client.Dispatch("Word.Application")
         S["started_word"] = True
         print("    (启动了新的 Word)")
@@ -286,7 +321,9 @@ def assemble():
         sys.exit(2)
 
     tmp = os.environ.get("TEMP") or _REPO
-    settings_path = os.path.join(tmp, "ai4word_walkthrough_settings.json")
+    # 并行测试槽通过环境变量指定各自的临时 settings，避免共用一份配置
+    settings_path = os.environ.get("AI4WORD_TEST_SETTINGS") or os.path.join(
+        tmp, "ai4word_walkthrough_settings.json")
     try:
         os.remove(settings_path)
     except OSError:
@@ -305,7 +342,9 @@ def assemble():
     app.setWindowIcon(app_icon(64))
     app.setStyleSheet(qss())
 
-    shm = QSharedMemory("AI4Word-SingleInstance-v8")
+    # 并行测试槽通过环境变量指定各自的共享内存 key（单实例锁互不冲突）
+    shm = QSharedMemory(os.environ.get("AI4WORD_SHM_KEY")
+                         or "AI4Word-SingleInstance-v8")
     if not shm.create(1):
         print("FAIL 已有 AI4Word 实例在运行（QSharedMemory 单实例），请先退出")
         sys.exit(3)

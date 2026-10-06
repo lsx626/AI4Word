@@ -28,3 +28,7 @@ build/preview_*.png
 pytest-cache-files-*/
 _*.py
 _*.txt
+
+# 深度测试运行产物（每轮约 1MB 且可由 tests/deep_test.py 重跑复现；
+# 各槽临时 settings.json 含 API 密钥明文，绝不入库）
+tests/deep_runs/

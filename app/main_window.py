@@ -163,13 +163,20 @@ class MainWindow(QWidget):
 
     def reload_flags(self):
         was_visible = self.isVisible()
-        # setWindowFlags 会重建底层窗口（新 HWND）：先注销旧窗口的热键，
-        # showEvent 里才会在新 HWND 上重新注册，否则 Ctrl+Alt+Space 失效
+        # setWindowFlags 可能重建底层窗口（新 HWND）：先注销旧窗口的热键，
+        # 再在新 HWND 上重新注册，否则 Ctrl+Alt+Space 失效
         self._unregister_hotkey()
         self.set_flags()
         self._apply_palette()
         if was_visible:
             self.show()
+            # show() 不保证重发 showEvent：flags 未变时 Qt 对 setWindowFlags
+            # 直接 early-return，已可见的窗口不隐藏不重建，随后的 show() 是
+            # 空操作、不重发 showEvent（PySide6 实测 showEvent 计数保持 1）。
+            # 此时「showEvent 里重注册」的契约静默失效——热键已被注销却没人
+            # 注册回来，必须在这里显式补注册，不能只依赖 showEvent
+            if not self._hotkey:
+                self._register_hotkey()
         else:
             # 隐藏态下设完 flags 不走 showEvent，但窗口句柄已重建，
             # 必须立刻在新 HWND 上注册热键，否则最小化到托盘期间失联
@@ -525,7 +532,13 @@ class MainWindow(QWidget):
         self.preset_combo.setSizeAdjustPolicy(
             QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.preset_combo.setToolTip("一键套用成套排版样式")
-        self.preset_combo.activated.connect(self._on_preset)
+        # 绑定 currentIndexChanged 而非 activated：activated 只在用户真实弹窗
+        # 选择时触发，程序化 setCurrentIndex 改选永不触发，_on_preset 会被
+        # 静默跳过（组合框不复位、preset 命令不投递）。currentIndexChanged
+        # 覆盖程序化改选与键盘导航；本处复位回充 setCurrentIndex(0) 会再次
+        # 触发，但被 _on_preset 的 idx<=0 守卫挡住，安全；且不与 activated
+        # 并存，避免真实弹窗/键盘选择时两个信号各触发一次、双次投递命令。
+        self.preset_combo.currentIndexChanged.connect(self._on_preset)
         blay.addWidget(self.preset_combo)
         blay.addStretch(1)
         self.btn_save = QPushButton(icon_save(), " 存档", toolbar)
@@ -868,11 +881,12 @@ class MainWindow(QWidget):
         self._tray = tray
 
     def _open_settings(self):
-        debug.log("settings_open")
+        # settings_open / settings_closed 由 SettingsDialog 自己打（__init__
+        # 与 done()）：本包装路径与「直接构造对话框」的调用方共用同一份接线，
+        # 两个事件都恰好一次，不再各打一遍。
         from app.settings_dialog import SettingsDialog
         dlg = SettingsDialog(self.settings, self.worker, parent=self)
         dlg.exec()
-        debug.log("settings_closed", api_key=self.settings.get("api_key"))
         self.reload_flags()
 
     def open_settings(self):

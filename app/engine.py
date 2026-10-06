@@ -98,6 +98,10 @@ class AgentWorker(QThread):
         if mode not in ("auto", "slow", "fast"):
             return
         self._speed = mode
+        # 与队列路径（_set_speed）统一事件名 speed_set：直连路径在尚未连接
+        # Word（_writer 为 None）时没有任何日志可看，档位变更完全不可观测。
+        # 放在 writer 转发之前：即使转发抛异常，事件也已落盘。
+        debug.log("speed_set", mode=mode)
         w = self._writer
         if w is not None:
             try:
@@ -603,6 +607,10 @@ class AgentWorker(QThread):
             debug.exc("run_code2_failed")
             ok2, err2 = False, f"{type(e).__name__}: {e}"
         if ok2:
+            # 与首次成功分支同一终态事件：否则成功修复后既无 arrange_applied
+            # 也无 arrange_failed，事件日志无法判定该排版指令的终态
+            # （deep_test arrange_repair 的 MUST 要 arrange_applied）。
+            debug.log("arrange_applied")
             self.message.emit("info", "修正代码执行完毕，已应用。")
             self._session.record_turn(prompt, True)
             self._persist()

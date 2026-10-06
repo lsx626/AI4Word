@@ -100,7 +100,11 @@ class SettingsDialog(QDialog):
                 self.auto_check.setChecked(False)
                 want_auto = False
         else:
-            disable()
+            # 本机从未勾过自启时 Run 值不存在：先问 is_enabled()，避免无谓
+            # 以 KEY_SET_VALUE 打开注册表（disable() 也已把「值不存在」
+            # 当作 no-op 成功，不再产出 autostart_disable_failed 噪声告警）
+            if is_enabled():
+                disable()
         self.settings.set("auto_start", want_auto)
 
         # 保存失败不能静默：用户会以为密钥已经存好
@@ -112,3 +116,14 @@ class SettingsDialog(QDialog):
             return
         debug.log("settings_saved", path=self.settings.path)
         super().accept()
+
+    def done(self, result):
+        # settings_open 的对称收口：accept（确定）/ reject（取消）/ 按 Esc /
+        # 点 X 最终都经 done()，所以这里发一次 settings_closed 覆盖所有入口
+        # （含不经 MainWindow._open_settings 直接构造对话框的调用方）。
+        # accept 在保存失败时提前 return、done 不被调用——对话框没关，
+        # 就不能报「已关闭」。
+        debug.log("settings_closed",
+                  accepted=bool(result == QDialog.Accepted),
+                  api_key=self.settings.get("api_key"))
+        super().done(result)

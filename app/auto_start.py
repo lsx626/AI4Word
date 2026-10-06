@@ -56,6 +56,12 @@ def disable():
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
             winreg.DeleteValue(k, VALUE_NAME)
         debug.log("autostart_disabled")
+    except FileNotFoundError:
+        # 值（或 Run 键）本来就不存在：取消自启是 no-op 成功，不是失败。
+        # 过去它与权限拒绝等真实失败一并被 OSError 捕获打成
+        # autostart_disable_failed（真机日志 21:38:08 两条「待确认告警」
+        # 即此噪声），噪声告警与真实写入失败混在一起，排障无从分辨。
+        debug.log("autostart_disabled", note="value_absent")
     except OSError as e:
         debug.warn("autostart_disable_failed", error=str(e)[:200])
     return True
