@@ -335,6 +335,27 @@ def test_reload_flags_reregisters_hotkey_when_hidden():
     win.close()
 
 
+def test_paint_event_busy_and_idle_no_raise():
+    """真机闪退根因（V9.2 实测，dump 0xC0000409）：输出中（busy=True）
+    的边框色取到字符串 AMBER，QPen(str, float) 在每次重绘抛 TypeError。
+    shiboken 通常打印后吞掉（"Error calling Python override of
+    QWidget::paintEvent()"），但与输出进行中的窗口操作（拖动/大小化
+    触发 QPainter 释放）叠加时会升级成 std::terminate -> abort。
+    paintEvent 必须在 busy/idle 两态下都只传 QColor 给 QPen。"""
+    from PySide6.QtGui import QPaintEvent
+    win = _window()
+    win.show()
+    QTest.qWait(50)
+    rect = win.rect()
+    for busy in (True, False):
+        win._busy = busy
+        win.paintEvent(QPaintEvent(rect))  # 不抛异常即通过
+    resize_before = (win.width(), win.height())
+    win.resize(resize_before[0] + 40, resize_before[1] + 20)
+    QTest.qWait(30)  # resizeEvent -> _apply_window_shape 也不能报错
+    win.close()
+
+
 if __name__ == "__main__":
     for name, fn in sorted(list(globals().items())):
         if name.startswith("test_") and callable(fn):
