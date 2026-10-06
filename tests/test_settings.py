@@ -87,3 +87,36 @@ def test_apply_env_sets_and_skips_empty():
 
     from ai_client import get_base_url
     assert get_base_url() == DEFAULT_BASE_URL  # 空设置回落默认
+
+
+def test_test_slot_redacts_api_key_on_disk():
+    """AI4WORD_TEST_SETTINGS（deep_test 并行槽）下 save() 不把 api_key
+    写入临时 settings 文件——槽级 settings 留在 tests/deep_runs/ 归档里，
+    明文密钥会被 git/分享带走；内存中的值不受影响，API 调用走 env。"""
+    slot_path = os.path.join(os.environ["TEMP"], "ai4w_slot_settings.json")
+    os.environ["AI4WORD_TEST_SETTINGS"] = slot_path
+    try:
+        s = Settings(slot_path)
+        s.set("api_key", "sk-secret-dont-persist")
+        s.set("model", "Atria-Dawn-Preview")
+        assert s.save() is True
+        # 内存里仍是完整密钥
+        assert s.get("api_key") == "sk-secret-dont-persist"
+        # 落盘的必是空串
+        with open(slot_path, encoding="utf-8") as f:
+            on_disk = json.load(f)
+        assert on_disk["api_key"] == ""
+        assert on_disk["model"] == "Atria-Dawn-Preview"
+    finally:
+        del os.environ["AI4WORD_TEST_SETTINGS"]
+        for p in (slot_path,):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+    # 非测试模式（env 已清）：密钥照常持久化
+    s2 = Settings(os.path.join(os.environ["TEMP"], "ai4w_normal.json"))
+    s2.set("api_key", "sk-normal-persist")
+    s2.save()
+    with open(s2.path, encoding="utf-8") as f:
+        assert json.load(f)["api_key"] == "sk-normal-persist"

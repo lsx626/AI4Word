@@ -88,11 +88,22 @@ class Settings:
         return self
 
     def save(self):
-        """原子保存；返回是否成功（失败时让调用方提示用户，而不是静默吞掉）。"""
+        """原子保存；返回是否成功（失败时让调用方提示用户，而不是静默吞掉）。
+
+        测试槽（AI4WORD_TEST_SETTINGS 指定临时 settings 路径）下 api_key
+        不落盘：deep_test 的槽级 settings 会留在 tests/deep_runs/ 随日志
+        归档，明文密钥有从仓库/归档泄漏的风险；密钥只留在内存，真实
+        API 调用一律走 os.environ（apply_env / main / engine 都不读盘上
+        的 api_key），所以落盘置空对运行无影响。"""
+        data = self._data
+        if os.environ.get("AI4WORD_TEST_SETTINGS") and \
+                (data.get("api_key") or "").strip():
+            data = dict(data)
+            data["api_key"] = ""
         tmp = self.path + ".tmp"
         try:
             with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(self._data, f, ensure_ascii=False, indent=2)
+                json.dump(data, f, ensure_ascii=False, indent=2)
             os.replace(tmp, self.path)
         except OSError as e:
             debug.warn("settings_save_failed", error=str(e)[:200])
