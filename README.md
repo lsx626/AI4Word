@@ -134,6 +134,8 @@ python tests/e2e_real_atria.py
 python tests/smoke_real_word.py
 ```
 
+- 单项真机验证（不需要 API）：`tests/anchor_real_word.py`（写入锚点防护）、`tests/import_real_word.py`（已有文档读取）、`tests/switch_real_word.py`（切换活动文档后引擎重绑）。
+
 - GUI 引擎 × 真实 Word（后台线程内 Dispatch，主线程独立连接校验，需提权运行 Word）：
 
 ```powershell
